@@ -177,7 +177,30 @@ function todayStr(){var d=new Date(),p=function(n){return String(n).padStart(2,"
 
 // ============ 本地存储后端 ============
 var LK="device_db_v2";
-function load(){try{return JSON.parse(localStorage.getItem(LK))||initDB();}catch(e){return initDB();}}
+var DEFAULT_FIELDS=[
+  {id:"type",label:"设备类型",type:"select",options:["手机","电脑","平板","其他"],required:true},
+  {id:"model",label:"手机型号",type:"input",placeholder:"如：iPhone 13 / Mate60",required:true},
+  {id:"phone",label:"手机号码",type:"input",placeholder:"如：13800008888",required:true},
+  {id:"card",label:"手机卡类型",type:"select",options:["移动","联通","电信","其他"],required:true},
+  {id:"platform",label:"抖音平台",type:"select",options:["抖音","抖音极速版","抖音火山版"],required:false},
+  {id:"nickname",label:"抖音昵称",type:"input",placeholder:"抖音昵称",required:false},
+  {id:"douyin_id",label:"抖音ID",type:"input",placeholder:"如：dy123456",required:false},
+  {id:"note",label:"备注",type:"input",placeholder:"其他说明",required:false}
+];
+var REMOVE_LABELS=["品牌","颜色","设备编号","设备型号"];
+function mergeFields(d){
+  if(!d||!d.fields)return;
+  d.fields=d.fields.filter(function(f){return REMOVE_LABELS.indexOf(f.label)<0;});
+  DEFAULT_FIELDS.forEach(function(f){
+    if(!d.fields.find(function(x){return x.label===f.label;})){
+      d.fields.push(JSON.parse(JSON.stringify(f)));
+    }
+  });
+}
+function load(){
+  try{var d=JSON.parse(localStorage.getItem(LK));if(d){mergeFields(d);return d;}}catch(e){}
+  return initDB();
+}
 function sv(){localStorage.setItem(LK,JSON.stringify(D));}
 function initDB(){
   return {
@@ -186,10 +209,12 @@ function initDB(){
     ],
     fields:[
       {id:"type",label:"设备类型",type:"select",options:["手机","电脑","平板","其他"],required:true},
-      {id:"brand",label:"品牌",type:"select",options:["华为","小米","苹果","OPPO","vivo","荣耀"],required:true},
-      {id:"model",label:"设备型号",type:"input",placeholder:"如：Mate60 Pro",required:true},
-      {id:"code",label:"设备编号",type:"input",placeholder:"如：SB0001",required:false},
-      {id:"color",label:"颜色",type:"select",options:["黑色","白色","银色","蓝色","金色"],required:false},
+      {id:"model",label:"手机型号",type:"input",placeholder:"如：iPhone 13 / Mate60",required:true},
+      {id:"phone",label:"手机号码",type:"input",placeholder:"如：13800008888",required:true},
+      {id:"card",label:"手机卡类型",type:"select",options:["移动","联通","电信","其他"],required:true},
+      {id:"platform",label:"抖音平台",type:"select",options:["抖音","抖音极速版","抖音火山版"],required:false},
+      {id:"nickname",label:"抖音昵称",type:"input",placeholder:"抖音昵称",required:false},
+      {id:"douyin_id",label:"抖音ID",type:"input",placeholder:"如：dy123456",required:false},
       {id:"note",label:"备注",type:"input",placeholder:"其他说明",required:false}
     ],
     assets:[],uses:[],repairs:[],requests:[]
@@ -277,7 +302,7 @@ function postAsset(tk,b){
 }
 function assetName(a){
   var parts=[];
-  ["type","brand","model"].forEach(function(k){if(a.data&&a.data[k])parts.push(a.data[k]);});
+  ["type","model","phone"].forEach(function(k){if(a.data&&a.data[k])parts.push(a.data[k]);});
   return parts.join(" · ")||"未命名设备";
 }
 
@@ -645,7 +670,7 @@ async function renderAssetTable(){
   var data=await apiGet("/api/assets");
   var f=document.getElementById("astFilter")?document.getElementById("astFilter").value:"";
   var kw=document.getElementById("astSearch")?(document.getElementById("astSearch").value||"").trim():"";
-  var list=data.assets.filter(function(a){return (!f||a.status===f)&&(!kw||(assetName(a)+" "+(a.data&&a.data.code||"")+" "+(a.data&&a.data.model||"")+" "+(a.data&&a.data.brand||"")+" "+a.created_by_name).indexOf(kw)>=0);});
+  var list=data.assets.filter(function(a){return (!f||a.status===f)&&(!kw||(assetName(a)+" "+(a.data&&a.data.model||"")+" "+(a.data&&a.data.phone||"")+" "+(a.data&&a.data.nickname||"")+" "+(a.data&&a.data.douyin_id||"")+" "+a.created_by_name).indexOf(kw)>=0);});
   var h="";
   list.forEach(function(a){
     var code=a.data&&a.data.code?"<span style=\"color:var(--faint);font-size:12px\">"+esc(a.data.code)+"</span>":"";
