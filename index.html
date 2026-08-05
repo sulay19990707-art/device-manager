@@ -415,14 +415,22 @@ function getStats(tk){
     assets=assets.filter(function(a){return a.created_by===u.id;});
   }
   var pendingReqs=D.requests.filter(function(x){return x.status==="pending";}).length;
+  var byType={};
+  assets.forEach(function(a){
+    var k=(a.data&&a.data.type)||"其他";
+    if(!byType[k])byType[k]={total:0,available:0,in_use:0,repairing:0,scrapped:0};
+    byType[k].total++;byType[k][a.status]=(byType[k][a.status]||0)+1;
+  });
   return[200,{stats:{
     total:assets.length,
     available:assets.filter(function(a){return a.status==="available";}).length,
     inUse:assets.filter(function(a){return a.status==="in_use";}).length,
     repairing:assets.filter(function(a){return a.status==="repairing";}).length,
+    scrapped:assets.filter(function(a){return a.status==="scrapped";}).length,
     myUse:uses.filter(function(x){return !x.return_time;}).length,
     pendingReqs:pendingReqs,
-    myPending:reqs.filter(function(x){return x.status==="pending";}).length
+    myPending:reqs.filter(function(x){return x.status==="pending";}).length,
+    byType:byType
   }}];
 }
 
@@ -526,13 +534,15 @@ function renderSidebar(){
       {id:"assets",icon:"📦",label:"设备台账"},
       {id:"uses",icon:"🔁",label:"领用记录"},
       {id:"repairs",icon:"🔧",label:"维修管理"},
+      {id:"stats",icon:"📊",label:"数据统计"},
       {id:"options",icon:"⚙️",label:"选项管理"},
       {id:"members",icon:"👤",label:"员工账号"}
     ];
   }else{
     items=[
       {id:"mydev",icon:"📱",label:"我的设备"},
-      {id:"mymain",icon:"📨",label:"我的申请"}
+      {id:"mymain",icon:"📨",label:"我的申请"},
+      {id:"stats",icon:"📊",label:"数据统计"}
     ];
   }
   var h="";
@@ -554,7 +564,7 @@ async function refreshBadges(){
   }catch(e){}
 }
 
-function navTo(page){CURRENT_PAGE=page;renderSidebar();if(page==="review")renderReview();else if(page==="assets")renderAssets();else if(page==="uses")renderUses();else if(page==="repairs")renderRepairs();else if(page==="options")renderOptions();else if(page==="members")renderMembers();else if(page==="mydev")renderMyDev();else if(page==="mymain")renderMyMain();}
+function navTo(page){CURRENT_PAGE=page;renderSidebar();if(page==="review")renderReview();else if(page==="assets")renderAssets();else if(page==="uses")renderUses();else if(page==="repairs")renderRepairs();else if(page==="stats")renderStats();else if(page==="options")renderOptions();else if(page==="members")renderMembers();else if(page==="mydev")renderMyDev();else if(page==="mymain")renderMyMain();}
 
 // ===== 标签 =====
 function assetTag(s){
@@ -635,7 +645,7 @@ async function renderAssetTable(){
   var data=await apiGet("/api/assets");
   var f=document.getElementById("astFilter")?document.getElementById("astFilter").value:"";
   var kw=document.getElementById("astSearch")?(document.getElementById("astSearch").value||"").trim():"";
-  var list=data.assets.filter(function(a){return (!f||a.status===f)&&(!kw||(assetName(a)+" "+(a.data&&a.data.code||"")+" "+a.created_by_name).indexOf(kw)>=0);});
+  var list=data.assets.filter(function(a){return (!f||a.status===f)&&(!kw||(assetName(a)+" "+(a.data&&a.data.code||"")+" "+(a.data&&a.data.model||"")+" "+(a.data&&a.data.brand||"")+" "+a.created_by_name).indexOf(kw)>=0);});
   var h="";
   list.forEach(function(a){
     var code=a.data&&a.data.code?"<span style=\"color:var(--faint);font-size:12px\">"+esc(a.data.code)+"</span>":"";
@@ -704,14 +714,16 @@ async function directDelAsset(id){if(!confirm("直接删除该设备？"))return
 // ===== 主管：领用记录 =====
 async function renderUses(){
   var h="<div class=\"page-title\">领用记录</div><div class=\"page-desc\">全部设备的领用与归还情况</div>";
+  h+="<div class=\"filter-bar\"><input id=\"useSearch\" placeholder=\"搜索设备/领用人\" oninput=\"renderUseTable()\"></div>";
   h+="<div class=\"card\"><div class=\"c-head\"><h3>领用记录</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th>设备</th><th>领用人</th><th>领用时间</th><th>归还时间</th><th>状态</th><th>操作</th></tr></thead><tbody id=\"useTableBody\"></tbody></table></div></div>";
   document.getElementById("content").innerHTML=h;
   renderUseTable();
 }
 async function renderUseTable(){
   var data=await apiGet("/api/uses");
+  var kw=document.getElementById("useSearch")?(document.getElementById("useSearch").value||"").trim():"";
   var h="";
-  data.uses.forEach(function(r){
+  data.uses.filter(function(r){return !kw||(r.asset_name+" "+r.user_name).indexOf(kw)>=0;}).forEach(function(r){
     var st=r.return_time?"<span class=\"tag tag-gray\">已归还</span>":"<span class=\"tag tag-blue\">使用中</span>";
     h+="<tr><td><b>"+esc(r.asset_name)+"</b></td><td>"+esc(r.user_name)+"</td><td class=\"num\">"+esc(r.take_time)+"</td><td class=\"num\">"+(r.return_time?esc(r.return_time):"—")+"</td><td>"+st+"</td><td>";
     if(!r.return_time)h+="<button class=\"btn btn-sm btn-green\" onclick=\"directReturn('"+r.id+"')\">直接归还</button>";
@@ -725,15 +737,17 @@ async function directReturn(id){try{await apiPost("/api/uses/"+id,{});toast("已
 // ===== 主管：维修管理 =====
 async function renderRepairs(){
   var h="<div class=\"page-title\">维修管理</div><div class=\"page-desc\">报修维修记录与状态处理</div>";
-  h+="<div class=\"card\"><div class=\"c-head\"><h3>维修记录</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th>设备</th><th>报修人</th><th>故障描述</th><th>报修时间</th><th>状态</th><th>操作</th></tr></thead><tbody id=\"repairTableBody\"></tbody></table></div></div>";
+  h+="<div class=\"filter-bar\"><input id=\"repSearch\" placeholder=\"搜索设备/报修人/描述\" oninput=\"renderRepairTable()\"></div>";
+  h+="<div class=\"card\"><div class=\"c-head\"><h3>维修记录</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th>设备</th><th>报修人</th><th>故障描述</th><th>报修时间</th><th>最后更新</th><th>状态</th><th>操作</th></tr></thead><tbody id=\"repairTableBody\"></tbody></table></div></div>";
   document.getElementById("content").innerHTML=h;
   renderRepairTable();
 }
 async function renderRepairTable(){
   var data=await apiGet("/api/repairs");
+  var kw=document.getElementById("repSearch")?(document.getElementById("repSearch").value||"").trim():"";
   var h="";
-  data.repairs.forEach(function(r){
-    h+="<tr><td><b>"+esc(r.asset_name)+"</b></td><td>"+esc(r.user_name)+"</td><td>"+esc(r.desc)+"</td><td class=\"num\">"+esc(r.created)+"</td><td>"+repairTag(r.status)+"</td><td>";
+  data.repairs.filter(function(r){return !kw||(r.asset_name+" "+r.user_name+" "+r.desc).indexOf(kw)>=0;}).forEach(function(r){
+    h+="<tr><td><b>"+esc(r.asset_name)+"</b></td><td>"+esc(r.user_name)+"</td><td>"+esc(r.desc)+"</td><td class=\"num\">"+esc(r.created)+"</td><td class=\"num\">"+esc(r.updated||"—")+"</td><td>"+repairTag(r.status)+"</td><td>";
     if(r.status==="repairing"){
       h+="<button class=\"btn btn-sm btn-green\" onclick=\"setRepair('"+r.id+"','fixed')\">已修好</button> ";
       h+="<button class=\"btn btn-sm btn-danger\" onclick=\"setRepair('"+r.id+"','scrapped')\">报废</button>";
@@ -815,14 +829,16 @@ async function addField(){
 async function renderMembers(){
   var h="<div class=\"page-title\">员工账号</div><div class=\"page-desc\">添加和管理员工账号</div>";
   h+="<div class=\"mb\"><button class=\"btn btn-primary\" onclick=\"showAddMember()\">＋ 添加员工</button></div>";
+  h+="<div class=\"filter-bar\"><input id=\"memSearch\" placeholder=\"搜索姓名/账号\" oninput=\"renderMemberTable()\"></div>";
   h+="<div class=\"card\"><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th>姓名</th><th>账号</th><th>创建时间</th><th>操作</th></tr></thead><tbody id=\"memberTableBody\"></tbody></table></div></div>";
   document.getElementById("content").innerHTML=h;
   renderMemberTable();
 }
 async function renderMemberTable(){
   var data=await apiGet("/api/users");
+  var kw=document.getElementById("memSearch")?(document.getElementById("memSearch").value||"").trim():"";
   var h="";
-  data.users.forEach(function(m){
+  data.users.filter(function(m){return !kw||(m.name+" "+m.username).indexOf(kw)>=0;}).forEach(function(m){
     h+="<tr><td><b>"+esc(m.name)+"</b></td><td>"+esc(m.username)+"</td><td class=\"num\">"+esc(m.created)+"</td><td><button class=\"btn btn-sm btn-danger\" onclick=\"delMember('"+m.id+"')\">删除</button></td></tr>";
   });
   if(!h)h="<tr><td colspan=\"4\" class=\"empty\">暂无员工，点击右上角添加</td></tr>";
@@ -865,8 +881,8 @@ async function renderMyDevList(){
     var code=a.data&&a.data.code?"<span style=\"color:var(--faint);font-size:12px\">"+esc(a.data.code)+"</span>":"";
     var myUse=uses.uses.find(function(x){return x.asset_id===a.id&&!x.return_time;});
     h+="<tr><td><b>"+esc(assetName(a))+"</b> "+code+"</td><td>"+assetTag(a.status)+"</td><td class=\"num\">"+esc(a.created)+"</td><td>";
-    if(a.status==="available")h+="<button class=\"btn btn-sm btn-danger\" onclick=\"reqDelete('"+a.id+"')\">删除申请</button>";
-    else if(a.status==="in_use"&&myUse)h+="<button class=\"btn btn-sm btn-orange\" onclick=\"reqReturn('"+a.id+"')\">退还申请</button>";
+    if(a.status==="in_use"&&myUse)h+="<button class=\"btn btn-sm btn-orange\" onclick=\"reqReturn('"+a.id+"')\">退还申请</button>";
+    else if(a.status==="available")h+="<span style=\"color:var(--faint);font-size:12px\">登记完成</span>";
     h+="</td></tr>";
   });
   if(!h)h="<tr><td colspan=\"4\" class=\"empty\">暂无设备，点击登记</td></tr>";
@@ -962,6 +978,29 @@ async function submitPwd(){
   if(!o||!n1){document.getElementById("pw_err").textContent="请填写完整";return;}
   if(n1!==n2){document.getElementById("pw_err").textContent="两次密码不一致";return;}
   try{await apiPost("/api/change_pwd",{old:o,pwd:n1});toast("密码已修改");closeModal();}catch(e){document.getElementById("pw_err").textContent=e.message;}
+}
+
+// ===== 数据统计 =====
+async function renderStats(){
+  var data=await apiGet("/api/stats");
+  var st=data.stats||{};
+  var role=STATE.user.role;
+  var h="<div class=\"page-title\">数据统计</div><div class=\"page-desc\">按设备类型 / 设备情况统计"+(role==="member"?"（我的设备）":"（全部设备）")+"</div>";
+  h+="<div class=\"kpi-row\">"+kpiCard("设备总数","#0a84ff",st.total)+kpiCard("在库","#34c759",st.available)+kpiCard("已领用","#7c5cff",st.inUse)+kpiCard("维修中","#ff9500",st.repairing)+"</div>";
+  h+="<div class=\"card\"><div class=\"c-head\"><h3>设备情况</h3></div><div class=\"c-body\">"+bar("在库",st.available,st.total,"#34c759")+bar("已领用",st.inUse,st.total,"#7c5cff")+bar("维修中",st.repairing,st.total,"#ff9500")+bar("已报废",st.scrapped||0,st.total,"#ff3b30")+"</div></div>";
+  h+="<div class=\"card\"><div class=\"c-head\"><h3>按设备类型</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th>设备类型</th><th>总数</th><th>在库</th><th>已领用</th><th>维修中</th><th>已报废</th></tr></thead><tbody>";
+  var bt=st.byType||{},keys=Object.keys(bt);
+  if(!keys.length)h+="<tr><td colspan=\"6\" class=\"empty\">暂无数据</td></tr>";
+  keys.forEach(function(k){
+    var v=bt[k];
+    h+="<tr><td><b>"+esc(k)+"</b></td><td class=\"num\">"+v.total+"</td><td class=\"num\">"+(v.available||0)+"</td><td class=\"num\">"+(v.in_use||0)+"</td><td class=\"num\">"+(v.repairing||0)+"</td><td class=\"num\">"+(v.scrapped||0)+"</td></tr>";
+  });
+  h+="</tbody></table></div></div>";
+  document.getElementById("content").innerHTML=h;
+}
+function bar(label,val,total,color){
+  var pct=total>0?Math.round(val/total*100):0;
+  return "<div style=\"margin-bottom:12px\"><div style=\"display:flex;justify-content:space-between;font-size:13px;margin-bottom:6px\"><span>"+label+"</span><b class=\"num\">"+val+" ("+pct+"%)</b></div><div style=\"height:8px;background:#eef1f5;border-radius:99px;overflow:hidden\"><div style=\"height:100%;width:"+pct+"%;background:"+color+";border-radius:99px;transition:.4s\"></div></div></div>";
 }
 
 // ===== KPI =====
