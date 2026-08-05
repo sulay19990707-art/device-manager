@@ -1292,7 +1292,7 @@ async function renderStats(){
   var data=await apiGet("/api/stats");
   var st=data.stats||{};
   var role=STATE.user.role;
-  var h="<div class=\"page-title\">数据统计</div><div class=\"page-desc\">按设备类型 / 设备情况统计"+(role==="member"?"（我的设备）":"（全部设备）")+"</div>";
+  var h="<div class=\"page-title\">数据统计</div><div class=\"page-desc\">按设备类型 / 卡类型 / 手机型号 / 设备情况统计"+(role==="member"?"（我的设备）":"（全部设备）")+"</div>";
   h+="<div class=\"kpi-row\">"+kpiCard("设备总数","#0a84ff",st.total)+kpiCard("在库","#34c759",st.available)+kpiCard("已领用","#7c5cff",st.inUse)+kpiCard("维修中","#ff9500",st.repairing)+"</div>";
   h+="<div class=\"card\"><div class=\"c-head\"><h3>设备情况</h3></div><div class=\"c-body\">"+bar("在库",st.available,st.total,"#34c759")+bar("已领用",st.inUse,st.total,"#7c5cff")+bar("维修中",st.repairing,st.total,"#ff9500")+bar("已报废",st.scrapped||0,st.total,"#ff3b30")+"</div></div>";
   h+="<div class=\"card\"><div class=\"c-head\"><h3>按设备类型</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th>设备类型</th><th>总数</th><th>在库</th><th>已领用</th><th>维修中</th><th>已报废</th></tr></thead><tbody>";
@@ -1302,6 +1302,16 @@ async function renderStats(){
     var v=bt[k];
     h+="<tr><td><b>"+esc(k)+"</b></td><td class=\"num\">"+v.total+"</td><td class=\"num\">"+(v.available||0)+"</td><td class=\"num\">"+(v.in_use||0)+"</td><td class=\"num\">"+(v.repairing||0)+"</td><td class=\"num\">"+(v.scrapped||0)+"</td></tr>";
   });
+  h+="</tbody></table></div></div>";
+  h+="<div class=\"card\"><div class=\"c-head\"><h3>按手机卡类型</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th>卡类型</th><th>数量</th></tr></thead><tbody>";
+  var bc=st.byCard||{};var cks=Object.keys(bc);
+  if(!cks.length)h+="<tr><td colspan=\"2\" class=\"empty\">暂无数据</td></tr>";
+  cks.forEach(function(k){h+="<tr><td>"+esc(k)+"</td><td class=\"num\">"+bc[k]+"</td></tr>";});
+  h+="</tbody></table></div></div>";
+  h+="<div class=\"card\"><div class=\"c-head\"><h3>按手机型号</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th>型号</th><th>数量</th></tr></thead><tbody>";
+  var bm=st.byModel||{};var mks=Object.keys(bm);
+  if(!mks.length)h+="<tr><td colspan=\"2\" class=\"empty\">暂无数据</td></tr>";
+  mks.forEach(function(k){h+="<tr><td>"+esc(k)+"</td><td class=\"num\">"+bm[k]+"</td></tr>";});
   h+="</tbody></table></div></div>";
   document.getElementById("content").innerHTML=h;
 }
