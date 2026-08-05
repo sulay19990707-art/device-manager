@@ -381,7 +381,7 @@ function delFieldOption(tk,id,val){
   var f=D.fields.find(function(x){return x.id===id;});if(!f)return[404,{error:"字段不存在"}];
   f.options=f.options.filter(function(x){return x!==val;});sv();return[200,{ok:true}];
 }
-function delField(tk,id){
+function doDelField(tk,id){
   var u=verify(tk);if(!u)return[401,{error:"未登录"}];if(u.role!=="supervisor")return[403,{error:"无权限"}];
   D.fields=D.fields.filter(function(x){return x.id!==id;});sv();return[200,{ok:true}];
 }
@@ -1075,7 +1075,7 @@ function route(method,path,tk,body){
   if(path==="/api/requests/batch_take"&&method==="POST")return batchTake(tk,body);
   if(path==="/api/requests/batch"&&method==="POST")return batchRequest(tk,body);
   if(pp[1]==="api"&&pp[2]==="users"&&pp.length===4&&method==="DELETE")return delUser(tk,pp[3]);
-  if(pp[1]==="api"&&pp[2]==="fields"&&pp.length===4&&method==="DELETE")return delField(tk,pp[3]);
+  if(pp[1]==="api"&&pp[2]==="fields"&&pp.length===4&&method==="DELETE")return doDelField(tk,pp[3]);
   if(pp[1]==="api"&&pp[2]==="fields"&&pp.length===4&&method==="POST")return postFieldOption(tk,pp[3],body);
   if(pp[1]==="api"&&pp[2]==="fields"&&pp.length===5&&method==="DELETE")return delFieldOption(tk,pp[3],decodeURIComponent(pp[4]));
   if(pp[1]==="api"&&pp[2]==="requests"&&pp.length===4&&method==="POST"){var act=body&&body.action;if(act==="approve")return approveRequest(tk,pp[3],body);if(act==="reject")return rejectRequest(tk,pp[3],body);if(act==="cancel")return cancelRequest(tk,pp[3]);}
