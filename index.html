@@ -448,7 +448,10 @@ function postAsset(tk,b){
   var data={};for(var k in b.data)data[k]=b.data[k];
   var snId=findFieldId("手机编号");
   if(snId&&data[snId]&&D.assets.find(function(x){return x.data&&x.data[snId]===data[snId]&&x.status!=="deleted";}))return[400,{error:"手机编号已存在，不能重复"}];
-  D.assets.push({id:uid(),data:data,status:"in_use",created:nowStr(),created_by:u.id,created_by_name:u.name});
+  var a={id:uid(),data:data,status:"in_use",created:nowStr(),created_by:u.id,created_by_name:u.name};
+  D.assets.push(a);
+  // v12.2：录入即分配——登记人自动成为使用人（生成领用记录，无需再申请领用）
+  D.uses.push({id:uid(),asset_id:a.id,asset_name:assetName(a),user_id:u.id,user_name:u.name,take_time:nowStr(),return_time:""});
   sv();return[200,{ok:true}];
 }
 function findFieldId(label){var f=D.fields.find(function(x){return x.label===label;});return f?f.id:null;}
