@@ -928,7 +928,7 @@ window.fetch=function(url,opts){
 
 // ============ 前端 ============
 var ROLE_LABELS={supervisor:"主管",leader:"组长",member:"员工"};
-var STATE={user:null},CURRENT_PAGE="",ASSET_FILTER="",MYDEV_TYPE="",WH_MODEL="";
+var STATE={user:null},CURRENT_PAGE="",ASSET_FILTER="",MYDEV_TYPE="",WH_MODEL="",WH_STATUS="available";
 var REQ_TYPES={take:["领用","tag-blue"],repair:["报修","tag-orange"],return:["退还","tag-purple"],delete:["删除","tag-red"],edit:["修改","tag-purple"]};
 var REQ_STATUS={pending:["待审核","tag-orange"],approved:["已同意","tag-green"],rejected:["已拒绝","tag-red"],cancelled:["已撤销","tag-gray"]};
 
@@ -1805,14 +1805,16 @@ async function renderWarehouse(){
   var fields=await apiGet("/api/fields");
   var assets=data.assets||[];
   var modelField=fields.fields.find(function(f){return f.label==="手机型号";});
-  var cardField=fields.fields.find(function(f){return f.label==="手机卡类型";});
   var isManager=(STATE.user.role==="supervisor"||STATE.user.role==="leader");
   var h="<div class=\"page-title\">仓库手机</div><div class=\"page-desc\">"+(isManager?"仓库放退回的设备，主管/组长可直接分配给员工，也可代员工申请领用":"查看仓库手机，勾选后可申请领用（需组长或主管审核同意）")+"</div>";
-  h+="<div class=\"filter-bar\"><input id=\"whSearch\" placeholder=\"搜索型号/编号/手机号/登记人\" oninput=\"renderWarehouseTable()\" style=\"flex:2\"><select id=\"whCard\" onchange=\"renderWarehouseTable()\"><option value=\"\">全部卡类型</option>";
-  (cardField&&cardField.options||[]).forEach(function(o){h+="<option value=\""+esc(o)+"\">"+esc(o)+"</option>";});
-  h+="</select><select id=\"whStatus\" onchange=\"renderWarehouseTable()\"><option value=\"\">全部状态</option><option value=\"available\">在库</option><option value=\"in_use\">已领用</option><option value=\"repairing\">维修中</option></select></div>";
+  // v12.7：去掉卡类型筛选，只保留搜索 + 型号
+  h+="<div class=\"filter-bar\"><input id=\"whSearch\" placeholder=\"搜索型号/编号/手机号/登记人\" oninput=\"renderWarehouseTable()\" style=\"flex:2\"></div>";
   h+="<div class=\"filter-bar\" style=\"flex-wrap:wrap\" id=\"whModelBar\">加载型号…</div>";
   h+="<div class=\"mb\" style=\"display:flex;gap:10px;align-items:center;flex-wrap:wrap\">";
+  // v12.7：状态切换按钮（全部/在库设备/已领用），默认在库
+  h+="<span class=\"chip"+(WH_STATUS===""?" on":"")+"\" data-v=\"\" onclick=\"filterWhStatus(this)\">全部</span>";
+  h+="<span class=\"chip"+(WH_STATUS==="available"?" on":"")+"\" data-v=\"available\" onclick=\"filterWhStatus(this)\">🏬 在库设备</span>";
+  h+="<span class=\"chip"+(WH_STATUS==="in_use"?" on":"")+"\" data-v=\"in_use\" onclick=\"filterWhStatus(this)\">📱 已领用</span>";
   if(isManager){
     h+="<select id=\"whAssignUser\" style=\"height:38px;border:1.5px solid var(--line);border-radius:9px;padding:0 12px;font-size:13px;background:#fff\"><option value=\"\">选择要分配的员工…</option></select>";
     h+="<button class=\"btn btn-green\" id=\"whAssignBtn\" onclick=\"whAssignTake()\">📤 领用给所选员工 (0)</button>";
@@ -1854,20 +1856,19 @@ async function renderWhModelBar(){
   bar.innerHTML=h;
 }
 function filterWhModel(el){WH_MODEL=el.getAttribute("data-v");renderWhModelBar();renderWarehouseTable();}
+// v12.7：状态切换（全部/在库/已领用）
+function filterWhStatus(el){WH_STATUS=el.getAttribute("data-v");renderWarehouse();}
 async function renderWarehouseTable(){
   var data=await apiGet("/api/warehouse");
   var useData=await apiGet("/api/uses");
   var fieldsData=await apiGet("/api/fields");
   var kw=document.getElementById("whSearch")?(document.getElementById("whSearch").value||"").trim():"";
   var mf=WH_MODEL;
-  var cf=document.getElementById("whCard")?document.getElementById("whCard").value:"";
-  var sf=document.getElementById("whStatus")?document.getElementById("whStatus").value:"";
   var h="";
   (data.assets||[]).forEach(function(a){
     var d=a.data||{};
     if(mf&&d.model!==mf)return;
-    if(cf&&d.card!==cf)return;
-    if(sf&&a.status!==sf)return;
+    if(WH_STATUS&&a.status!==WH_STATUS)return;
     if(kw&&(assetName(a)+" "+(d.model||"")+" "+(d.phone||"")+" "+(d.sn||"")+" "+a.created_by_name).indexOf(kw)<0)return;
     var canTake=a.status==="available";
     var myUse=useData.uses.find(function(x){return x.asset_id===a.id&&!x.return_time;});
