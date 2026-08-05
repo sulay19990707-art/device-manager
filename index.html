@@ -197,11 +197,36 @@ function mergeFields(d){
     }
   });
 }
-function load(){
-  try{var d=JSON.parse(localStorage.getItem(LK));if(d){mergeFields(d);return d;}}catch(e){}
-  return initDB();
+function loadLocal(){try{var d=JSON.parse(localStorage.getItem(LK));if(d)mergeFields(d);return d;}catch(e){return null;}}
+function svLocal(){localStorage.setItem(LK,JSON.stringify(D));}
+var CLOUD_URL="https://hfafiokmdampruoenkgt.supabase.co";
+var CLOUD_KEY="sb_publishable_shABnm73cIBqH3mAvwe9pA_W40JPiae";
+var cloudReady=false,cloudPromise=null,lastPull=0;
+function pushCloud(){
+  try{
+    fetch(CLOUD_URL+"/rest/v1/app_data?id=eq.1",{method:"PATCH",headers:{apikey:CLOUD_KEY,Authorization:"Bearer "+CLOUD_KEY,"Content-Type":"application/json"},body:JSON.stringify({data:D,updated_at:new Date().toISOString()})});
+  }catch(e){}
 }
-function sv(){localStorage.setItem(LK,JSON.stringify(D));}
+async function pullCloud(force){
+  var now=Date.now();
+  if(!force&&now-lastPull<8000)return;
+  lastPull=now;
+  try{
+    var res=await fetch(CLOUD_URL+"/rest/v1/app_data?id=eq.1",{headers:{apikey:CLOUD_KEY,Authorization:"Bearer "+CLOUD_KEY}});
+    var rows=await res.json();
+    if(rows&&rows.length&&rows[0].data&&Object.keys(rows[0].data).length){
+      D=rows[0].data;
+      if(!D.users)D.users=[];
+      if(!D.fields)D.fields=[];
+      mergeFields(D);
+      svLocal();
+    }else{
+      pushCloud();
+    }
+  }catch(e){console.log("云端加载失败",e.message);}
+}
+function ensureCloud(){if(!cloudPromise)cloudPromise=pullCloud().then(function(){cloudReady=true;});return cloudPromise;}
+function sv(){svLocal();pushCloud();}
 function initDB(){
   return {
     users:[
@@ -220,7 +245,7 @@ function initDB(){
     assets:[],uses:[],repairs:[],requests:[]
   };
 }
-var D=load();
+var D=loadLocal()||initDB();
 
 // ============ Token ============
 var TOKEN_KEY="device_token";
@@ -509,6 +534,7 @@ var REQ_TYPES={take:["领用","tag-blue"],repair:["报修","tag-orange"],return:
 var REQ_STATUS={pending:["待审核","tag-orange"],approved:["已同意","tag-green"],rejected:["已拒绝","tag-red"]};
 
 async function apiJSON(path,opts){
+  try{await pullCloud();}catch(e){}
   var headers={"Content-Type":"application/json"};
   if(opts&&opts.headers)for(var k in opts.headers)headers[k]=opts.headers[k];
   var tk=getToken();if(tk)headers["Authorization"]="Bearer "+tk;
@@ -527,6 +553,7 @@ function closeModal(){document.getElementById("modalMask").style.display="none";
 
 // ===== 登录 =====
 async function tryLogin(){
+  try{await ensureCloud();}catch(e){}
   var u=document.getElementById("loginUser").value.trim();
   var p=document.getElementById("loginPwd").value;
   var err=document.getElementById("loginErr"),btn=document.getElementById("loginBtn");
@@ -1038,6 +1065,7 @@ function kpiCard(label,color,val){
 
 // ===== 启动：恢复会话 =====
 (function(){
+  ensureCloud();
   var tk=getToken();
   if(tk){
     apiGet("/api/me").then(function(d){
