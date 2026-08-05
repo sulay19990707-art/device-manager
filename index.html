@@ -214,11 +214,11 @@ function loadLocal(){try{var d=JSON.parse(localStorage.getItem(LK));if(d)mergeFi
 function svLocal(){localStorage.setItem(LK,JSON.stringify(D));}
 var CLOUD_URL="https://hfafiokmdampruoenkgt.supabase.co";
 var CLOUD_KEY="sb_publishable_shABnm73cIBqH3mAvwe9pA_W40JPiae";
-var cloudReady=false,cloudPromise=null,lastPull=0;
+var cloudReady=false,cloudPromise=null,lastPull=0,D_DIRTY=false;
 function pushCloud(){
   try{
-    fetch(CLOUD_URL+"/rest/v1/app_data?id=eq.1",{method:"PATCH",headers:{apikey:CLOUD_KEY,Authorization:"Bearer "+CLOUD_KEY,"Content-Type":"application/json"},body:JSON.stringify({data:D,updated_at:new Date().toISOString()})});
-  }catch(e){}
+    return fetch(CLOUD_URL+"/rest/v1/app_data?id=eq.1",{method:"PATCH",headers:{apikey:CLOUD_KEY,Authorization:"Bearer "+CLOUD_KEY,"Content-Type":"application/json"},body:JSON.stringify({data:D,updated_at:new Date().toISOString()})});
+  }catch(e){return Promise.resolve();}
 }
 async function pullCloud(force){
   var now=Date.now();
@@ -228,6 +228,10 @@ async function pullCloud(force){
     var res=await fetch(CLOUD_URL+"/rest/v1/app_data?id=eq.1",{headers:{apikey:CLOUD_KEY,Authorization:"Bearer "+CLOUD_KEY}});
     var rows=await res.json();
     if(rows&&rows.length&&rows[0].data&&Object.keys(rows[0].data).length){
+      if(D_DIRTY){
+        pushCloud();
+        return;
+      }
       D=rows[0].data;
       if(!D.users)D.users=[];
       if(!D.fields)D.fields=[];
@@ -239,7 +243,7 @@ async function pullCloud(force){
   }catch(e){console.log("云端加载失败",e.message);}
 }
 function ensureCloud(){if(!cloudPromise)cloudPromise=pullCloud().then(function(){cloudReady=true;});return cloudPromise;}
-function sv(){svLocal();pushCloud();}
+function sv(){svLocal();D_DIRTY=true;pushCloud().then(function(){D_DIRTY=false;}).catch(function(){D_DIRTY=false;});}
 function initDB(){
   return {
     users:[
@@ -366,7 +370,11 @@ function delField(tk,id){
 function getAssets(tk){
   var u=verify(tk);if(!u)return[401,{error:"未登录"}];
   var list=D.assets.filter(function(a){return a.status!=="deleted";});
-  if(u.role!=="supervisor")list=list.filter(function(a){return inScope(u,a.created_by);});
+  if(u.role!=="supervisor")list=list.filter(function(a){
+    if(inScope(u,a.created_by))return true;
+    if(u.role==="member"&&D.uses.some(function(x){return x.asset_id===a.id&&x.user_id===u.id&&!x.return_time;}))return true;
+    return false;
+  });
   return[200,{assets:list.map(function(a){return Object.assign({},a);})}];
 }
 function postAsset(tk,b){
@@ -577,6 +585,52 @@ function editMyAsset(tk,b){
   }
   sv();return[200,{ok:true}];
 }
+// ===== 后端：字段/选项排序 + 仓库 + 批量领用 =====
+function moveField(tk,b){
+  var u=verify(tk);if(!u)return[401,{error:"未登录"}];
+  if(u.role!=="supervisor"&&u.role!=="leader")return[403,{error:"无权限"}];
+  var i=D.fields.findIndex(function(x){return x.id===b.id;});
+  if(i<0)return[404,{error:"字段不存在"}];
+  var j=b.dir==="up"?i-1:i+1;
+  if(j<0||j>=D.fields.length)return[400,{error:"已到边界"}];
+  var t=D.fields[i];D.fields[i]=D.fields[j];D.fields[j]=t;
+  sv();return[200,{ok:true}];
+}
+function moveOption(tk,b){
+  var u=verify(tk);if(!u)return[401,{error:"未登录"}];
+  if(u.role!=="supervisor"&&u.role!=="leader")return[403,{error:"无权限"}];
+  var f=D.fields.find(function(x){return x.id===b.id;});
+  if(!f||!f.options)return[404,{error:"字段不存在"}];
+  var i=f.options.indexOf(b.value);
+  if(i<0)return[404,{error:"选项不存在"}];
+  var j=b.dir==="up"?i-1:i+1;
+  if(j<0||j>=f.options.length)return[400,{error:"已到边界"}];
+  var t=f.options[i];f.options[i]=f.options[j];f.options[j]=t;
+  sv();return[200,{ok:true}];
+}
+function getWarehouse(tk){
+  var u=verify(tk);if(!u)return[401,{error:"未登录"}];
+  var list=D.assets.filter(function(a){
+    return a.status!=="deleted";
+  }).sort(function(a,b){return b.created.localeCompare(a.created);});
+  return[200,{assets:list}];
+}
+function batchTake(tk,b){
+  var u=verify(tk);if(!u)return[401,{error:"未登录"}];
+  var ids=b.asset_ids||[];
+  if(!ids.length)return[400,{error:"未选择设备"}];
+  var ok=0,fail=0;
+  ids.forEach(function(aid){
+    var a=D.assets.find(function(x){return x.id===aid;});
+    if(!a||a.status!=="available"){fail++;return;}
+    if(D.uses.find(function(x){return x.asset_id===aid&&!x.return_time;})){fail++;return;}
+    D.requests.push({id:uid(),type:"take",asset_id:aid,asset_name:assetName(a),user_id:u.id,user_name:u.name,status:"pending",created:nowStr(),desc:""});
+    ok++;
+  });
+  if(!ok)return[400,{error:"所选设备都不可领用"}];
+  sv();return[200,{ok:true,submitted:ok,failed:fail}];
+}
+
 function actionDelete(tk,b){
   var u=verify(tk);if(!u)return[401,{error:"未登录"}];
   if(u.role!=="supervisor"&&u.role!=="leader")return[403,{error:"无权限"}];
@@ -644,6 +698,10 @@ function route(method,path,tk,body){
   if(path==="/api/actions/return_asset"&&method==="POST")return actionReturnAsset(tk,body);
   if(path==="/api/actions/edit_asset"&&method==="POST")return editAsset(tk,body);
   if(path==="/api/actions/edit_my_asset"&&method==="POST")return editMyAsset(tk,body);
+  if(path==="/api/fields/move"&&method==="POST")return moveField(tk,body);
+  if(path==="/api/fields/option_move"&&method==="POST")return moveOption(tk,body);
+  if(path==="/api/warehouse"&&method==="GET")return getWarehouse(tk);
+  if(path==="/api/requests/batch_take"&&method==="POST")return batchTake(tk,body);
   if(path==="/api/requests/batch"&&method==="POST")return batchRequest(tk,body);
   if(pp[1]==="api"&&pp[2]==="users"&&pp.length===4&&method==="DELETE")return delUser(tk,pp[3]);
   if(pp[1]==="api"&&pp[2]==="fields"&&pp.length===4&&method==="DELETE")return delField(tk,pp[3]);
@@ -756,14 +814,17 @@ function renderSidebar(){
     items=[
       {id:"review",icon:"📋",label:"待审申请"},
       {id:"assets",icon:"📦",label:"设备台账"},
+      {id:"warehouse",icon:"🏬",label:"仓库手机"},
       {id:"uses",icon:"🔁",label:"领用记录"},
       {id:"repairs",icon:"🔧",label:"维修管理"},
       {id:"stats",icon:"📊",label:"数据统计"},
+      {id:"options",icon:"⚙️",label:"选项管理"},
       {id:"members",icon:"👤",label:"员工账号"}
     ];
   }else{
     items=[
       {id:"mydev",icon:"📱",label:"我的设备"},
+      {id:"warehouse",icon:"🏬",label:"仓库手机"},
       {id:"mymain",icon:"📨",label:"我的申请"},
       {id:"stats",icon:"📊",label:"数据统计"}
     ];
@@ -787,7 +848,7 @@ async function refreshBadges(){
   }catch(e){}
 }
 
-function navTo(page){CURRENT_PAGE=page;renderSidebar();if(page==="review")renderReview();else if(page==="assets")renderAssets();else if(page==="uses")renderUses();else if(page==="repairs")renderRepairs();else if(page==="stats")renderStats();else if(page==="options")renderOptions();else if(page==="members")renderMembers();else if(page==="mydev")renderMyDev();else if(page==="mymain")renderMyMain();}
+function navTo(page){CURRENT_PAGE=page;renderSidebar();if(page==="review")renderReview();else if(page==="assets")renderAssets();else if(page==="uses")renderUses();else if(page==="repairs")renderRepairs();else if(page==="stats")renderStats();else if(page==="options")renderOptions();else if(page==="warehouse")renderWarehouse();else if(page==="members")renderMembers();else if(page==="mydev")renderMyDev();else if(page==="mymain")renderMyMain();}
 
 // ===== 标签 =====
 function assetTag(s){
@@ -1112,12 +1173,18 @@ async function renderOptions(){
 async function renderFieldList(){
   var data=await apiGet("/api/fields");
   var h="";
-  data.fields.forEach(function(f){
-    h+="<div class=\"req-item\"><div class=\"r-top\"><b>"+esc(f.label)+"</b>"+(f.type==="select"?"<span class=\"tag tag-blue\">选择题</span>":"<span class=\"tag tag-purple\">填空</span>")+(f.required?"<span class=\"tag tag-orange\">必填</span>":"")+"<span style=\"flex:1\"></span><button class=\"btn btn-sm btn-danger\" onclick=\"delField('"+f.id+"')\">删除字段</button></div>";
+  data.fields.forEach(function(f,i){
+    h+="<div class=\"req-item\"><div class=\"r-top\"><b>"+esc(f.label)+"</b>"+(f.type==="select"?"<span class=\"tag tag-blue\">选择题</span>":"<span class=\"tag tag-purple\">填空</span>")+(f.required?"<span class=\"tag tag-orange\">必填</span>":"")+"<span style=\"flex:1\"></span>"
+      +"<button class=\"btn btn-sm btn-ghost\" onclick=\"moveFieldPos('"+f.id+"','up')\" "+(i===0?"disabled":"")+">↑</button> "
+      +"<button class=\"btn btn-sm btn-ghost\" onclick=\"moveFieldPos('"+f.id+"','down')\" "+(i===data.fields.length-1?"disabled":"")+">↓</button> "
+      +"<button class=\"btn btn-sm btn-danger\" onclick=\"delField('"+f.id+"')\">删除字段</button></div>";
     if(f.type==="select"){
       h+="<div style=\"display:flex;flex-wrap:wrap;gap:8px;margin-top:10px\">";
-      f.options.forEach(function(o){
-        h+="<span class=\"tag tag-gray\" style=\"padding:5px 12px\">"+esc(o)+" <a href=\"javascript:void(0)\" onclick=\"delOption('"+f.id+"','"+esc(o)+"')\" style=\"color:var(--red);margin-left:2px\">✕</a></span>";
+      f.options.forEach(function(o,oi){
+        h+="<span class=\"tag tag-gray\" style=\"padding:5px 12px\">"+esc(o)
+          +" <a href=\"javascript:void(0)\" onclick=\"moveOptionPos('"+f.id+"','"+esc(o)+"','up')\" style=\"color:var(--accent)\">↑</a> "
+          +"<a href=\"javascript:void(0)\" onclick=\"moveOptionPos('"+f.id+"','"+esc(o)+"','down')\" style=\"color:var(--accent)\">↓</a> "
+          +"<a href=\"javascript:void(0)\" onclick=\"delOption('"+f.id+"','"+esc(o)+"')\" style=\"color:var(--red);margin-left:2px\">✕</a></span>";
       });
       h+="</div>";
       h+="<div style=\"display:flex;gap:8px;margin-top:10px\"><input id=\"opt_"+f.id+"\" placeholder=\"添加选项\" style=\"height:36px;border:1.5px solid var(--line);border-radius:8px;padding:0 12px;font-size:13px;flex:1\"><button class=\"btn btn-sm btn-primary\" onclick=\"addOption('"+f.id+"')\">添加</button></div>";
@@ -1129,6 +1196,8 @@ async function renderFieldList(){
   if(!h)h="<div class=\"empty\">暂无字段</div>";
   document.getElementById("fieldBody").innerHTML=h;
 }
+async function moveFieldPos(id,dir){try{await apiPost("/api/fields/move",{id:id,dir:dir});renderFieldList();}catch(e){toast(e.message,"err");}}
+async function moveOptionPos(fid,val,dir){try{await apiPost("/api/fields/option_move",{id:fid,value:val,dir:dir});renderFieldList();}catch(e){toast(e.message,"err");}}
 async function addOption(fid){
   var v=document.getElementById("opt_"+fid).value.trim();
   if(!v){toast("请填写选项","err");return;}
@@ -1255,6 +1324,68 @@ async function addMember(){
     if(STATE.user.role==="supervisor"){renderLeaderTable();renderDirectMembers();}else{renderMemberTable();}
   }catch(e){document.getElementById("m_err").textContent=e.message;}
 }
+
+// ===== 前端：仓库手机页 =====
+async function renderWarehouse(){
+  var data=await apiGet("/api/warehouse");
+  var fields=await apiGet("/api/fields");
+  var assets=data.assets||[];
+  var modelField=fields.fields.find(function(f){return f.label==="手机型号";});
+  var cardField=fields.fields.find(function(f){return f.label==="手机卡类型";});
+  var h="<div class=\"page-title\">仓库手机</div><div class=\"page-desc\">查看主管/组长录入的手机，勾选后可申请领用（需组长或主管审核同意）</div>";
+  h+="<div class=\"filter-bar\"><input id=\"whSearch\" placeholder=\"搜索型号/编号/手机号/登记人\" oninput=\"renderWarehouseTable()\" style=\"flex:2\"><select id=\"whModel\" onchange=\"renderWarehouseTable()\"><option value=\"\">全部型号</option>";
+  (modelField&&modelField.options||[]).forEach(function(o){h+="<option value=\""+esc(o)+"\">"+esc(o)+"</option>";});
+  h+="</select><select id=\"whCard\" onchange=\"renderWarehouseTable()\"><option value=\"\">全部卡类型</option>";
+  (cardField&&cardField.options||[]).forEach(function(o){h+="<option value=\""+esc(o)+"\">"+esc(o)+"</option>";});
+  h+="</select><select id=\"whStatus\" onchange=\"renderWarehouseTable()\"><option value=\"\">全部状态</option><option value=\"available\">在库</option><option value=\"in_use\">已领用</option><option value=\"repairing\">维修中</option></select></div>";
+  h+="<div class=\"mb\" style=\"display:flex;gap:10px;align-items:center\"><button class=\"btn btn-primary\" id=\"whTakeBtn\" onclick=\"whBatchTake()\">📥 申请领用所选 (0)</button><span id=\"whSelInfo\" style=\"font-size:13px;color:var(--sub)\"></span></div>";
+  h+="<div class=\"card\"><div class=\"c-head\"><h3>手机列表</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th style=\"width:36px\"><input type=\"checkbox\" id=\"whAll\" onchange=\"whToggleAll(this)\"></th><th>设备</th><th>状态</th><th>登记人</th><th>登记时间</th></tr></thead><tbody id=\"whBody\"></tbody></table></div></div>";
+  document.getElementById("content").innerHTML=h;
+  renderWarehouseTable();
+}
+async function renderWarehouseTable(){
+  var data=await apiGet("/api/warehouse");
+  var kw=document.getElementById("whSearch")?(document.getElementById("whSearch").value||"").trim():"";
+  var mf=document.getElementById("whModel")?document.getElementById("whModel").value:"";
+  var cf=document.getElementById("whCard")?document.getElementById("whCard").value:"";
+  var sf=document.getElementById("whStatus")?document.getElementById("whStatus").value:"";
+  var h="";
+  (data.assets||[]).forEach(function(a){
+    var d=a.data||{};
+    if(mf&&d.model!==mf)return;
+    if(cf&&d.card!==cf)return;
+    if(sf&&a.status!==sf)return;
+    if(kw&&(assetName(a)+" "+(d.model||"")+" "+(d.phone||"")+" "+(d.sn||"")+" "+a.created_by_name).indexOf(kw)<0)return;
+    var canTake=a.status==="available";
+    h+="<tr><td><input type=\"checkbox\" class=\"wh-chk\" value=\""+a.id+"\" "+(canTake?"":"disabled")+" onchange=\"whUpdateSel()\"></td><td><b>"+esc(assetName(a))+"</b></td><td>"+assetTag(a.status)+(canTake?"":"<br><span style=\"font-size:11px;color:var(--faint)\">不可领用</span>")+"</td><td>"+esc(a.created_by_name)+"</td><td class=\"num\">"+esc(a.created)+"</td></tr>";
+  });
+  if(!h)h="<tr><td colspan=\"5\" class=\"empty\">暂无符合条件的手机</td></tr>";
+  document.getElementById("whBody").innerHTML=h;
+  whUpdateSel();
+}
+function whToggleAll(el){
+  var checked=el.checked;
+  Array.prototype.forEach.call(document.querySelectorAll(".wh-chk:not(:disabled)"),function(c){c.checked=checked;});
+  whUpdateSel();
+}
+function whUpdateSel(){
+  var n=document.querySelectorAll(".wh-chk:checked").length;
+  var btn=document.getElementById("whTakeBtn");
+  if(btn)btn.textContent="📥 申请领用所选 ("+n+")";
+  var info=document.getElementById("whSelInfo");
+  if(info)info.textContent=n?"已选 "+n+" 台，提交后需审核":"";
+}
+async function whBatchTake(){
+  var ids=Array.prototype.map.call(document.querySelectorAll(".wh-chk:checked"),function(c){return c.value;});
+  if(!ids.length){toast("请先勾选要领用的手机","err");return;}
+  try{
+    var r=await apiPost("/api/requests/batch_take",{asset_ids:ids});
+    toast("已提交 "+r.submitted+" 台，等待审核");
+    renderWarehouseTable();
+    refreshBadges();
+  }catch(e){toast(e.message,"err");}
+}
+
 
 // ===== 员工：我的设备 =====
 async function renderMyDev(){
