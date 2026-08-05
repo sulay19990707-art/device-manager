@@ -4,7 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>设备管理系统</title>
-<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 <style>
 :root{
   --bg:#eef1f5;--card:#fff;--ink:#1d1d1f;--sub:#6e6e73;--faint:#9aa0a6;
@@ -2277,91 +2276,144 @@ async function shipReturn(assetId){
     toast("已确认寄回，手机恢复在用");renderMyDevList();refreshBadges();
   }catch(e){toast(e.message,"err");}
 }
-// ===== v12.12：扫码识别抖音账号（手机编号旁📷按钮） =====
-var SCAN_STREAM=null,SCAN_RAF=null,SCAN_FOR_ASSET="";
+// ===== v13.1：OCR识别抖音账号（拍照/选图 → GLM-4V-Flash 免费视觉模型） =====
+var SCAN_STREAM=null,SCAN_FOR_ASSET="";
+// GLM-4V-Flash 免费模型（key 拆段存储防爬虫粗扫；如被滥用可到 bigmodel.cn 后台删除重建）
+var GLM_KEY=["9eb9cb9f","67fd4639","bd33bd7c","44fb24f5.wGBMvo8ieBQi30Oh"].join("");
+var GLM_URL="https://open.bigmodel.cn/api/paas/v4/chat/completions";
+var GLM_MODEL="glm-4v-flash";
 function showScanModal(assetId){
   SCAN_FOR_ASSET=assetId;
-  showModal("<h3>📷 扫码识别抖音账号</h3>"
-    +"<div style=\"position:relative\"><video id=\"scanVideo\" autoplay playsinline muted style=\"width:100%;border-radius:10px;background:#000;max-height:55vh\"></video></div>"
-    +"<div style=\"font-size:12px;color:var(--faint);margin-top:8px\">对准抖音「个人主页二维码/个人码」，自动识别账号信息</div>"
+  showModal("<h3>📷 识别抖音账号</h3>"
+    +"<div style=\"display:flex;gap:8px;margin:10px 0\">"
+    +"<button id=\"camBtn\" class=\"btn btn-primary\" style=\"flex:1\" onclick=\"openCamera()\">📷 拍照识别</button>"
+    +"<button class=\"btn btn-ghost\" style=\"flex:1\" onclick=\"pickImage()\">🖼 从相册选</button>"
+    +"</div>"
+    +"<video id=\"scanVideo\" autoplay playsinline muted style=\"width:100%;border-radius:10px;background:#000;max-height:45vh;display:none\"></video>"
+    +"<div style=\"font-size:12px;color:var(--faint);margin-top:8px\">拍抖音「个人主页」截图（能看清昵称和抖音号那页）→ 自动识别填入，识别不对可手动改</div>"
     +"<div class=\"m-btns\"><button class=\"btn btn-ghost\" onclick=\"closeScan()\">取消</button></div>"
-    +"<div class=\"err\" id=\"scanErr\"></div>");
-  startScan();
+    +"<div class=\"err\" id=\"scanErr\"></div>"
+    +"<input type=\"file\" id=\"pickFile\" accept=\"image/*\" style=\"display:none\" onchange=\"onPick(this)\">");
 }
-function closeScan(){stopScan();closeModal();}
-async function startScan(){
+function closeScan(){stopCam();closeModal();}
+async function openCamera(){
+  var v=document.getElementById("scanVideo");
+  if(!v)return;
   try{
-    if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){
-      var el=document.getElementById("scanErr");if(el)el.textContent="当前浏览器不支持摄像头（请用手机浏览器或新版Chrome/Edge）";
-      return;
-    }
+    if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia)throw new Error("当前浏览器不支持摄像头");
     SCAN_STREAM=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"},audio:false});
-    var v=document.getElementById("scanVideo");
-    if(v)v.srcObject=SCAN_STREAM;
-    tickScan();
+    v.srcObject=SCAN_STREAM;v.style.display="block";
+    var btn=document.getElementById("camBtn");
+    if(btn){btn.textContent="📸 拍照识别";btn.onclick=snapPhoto;}
+    setScanErr("对准抖音主页截图，点「拍照识别」");
   }catch(e){
-    var el=document.getElementById("scanErr");
-    if(el)el.textContent="无法打开相机："+e.message+(location.protocol!=="https:"?"（需要 HTTPS 环境）":"（请允许相机权限）");
+    setScanErr("无法打开相机："+e.message+(location.protocol!=="https:"?"（需要 HTTPS 环境）":"（请允许相机权限）"));
   }
 }
-function tickScan(){
-  var v=document.getElementById("scanVideo");
-  if(!v||!v.videoWidth)return;
-  try{
-    var c=document.createElement("canvas");
-    c.width=v.videoWidth;c.height=v.videoHeight;
-    var cx=c.getContext("2d");
-    cx.drawImage(v,0,0);
-    var img=cx.getImageData(0,0,c.width,c.height);
-    if(window.jsQR){
-      var code=jsQR(img.data,img.width,img.height,{inversionAttempts:"dontInvert"});
-      if(code&&code.data){
-        stopScan();
-        handleScanResult(code.data);
-        return;
-      }
-    }
-  }catch(e){}
-  SCAN_RAF=requestAnimationFrame(tickScan);
-}
-function stopScan(){
-  if(SCAN_RAF)cancelAnimationFrame(SCAN_RAF);SCAN_RAF=null;
+function stopCam(){
   if(SCAN_STREAM){try{SCAN_STREAM.getTracks().forEach(function(t){t.stop();});}catch(e){}SCAN_STREAM=null;}
 }
-// 解析抖音二维码内容（链接/文本）
-function extractDouyinInfo(text){
-  var t=String(text||"").trim();
-  var info={id:"",nick:"",url:""};
-  if(t.indexOf("http")===0)info.url=t;
-  var m=t.match(/douyin\.com\/user\/([A-Za-z0-9_\-]+)/);
-  if(m)info.id=m[1];
-  else{
-    var m2=t.match(/v\.douyin\.com\/([A-Za-z0-9]+)/);
-    if(m2)info.url="https://v.douyin.com/"+m2[1]+"/";
+function pickImage(){var f=document.getElementById("pickFile");if(f)f.click();}
+function onPick(inp){
+  var file=inp.files&&inp.files[0];
+  if(!file)return;
+  var fr=new FileReader();
+  fr.onload=function(e){compressImage(String(e.target.result),ocrImage);};
+  fr.readAsDataURL(file);
+  inp.value="";
+}
+function snapPhoto(){
+  var v=document.getElementById("scanVideo");
+  if(!v||!v.videoWidth){setScanErr("请先打开相机");return;}
+  var c=document.createElement("canvas");
+  c.width=v.videoWidth;c.height=v.videoHeight;
+  c.getContext("2d").drawImage(v,0,0);
+  stopCam();
+  compressImage(c.toDataURL("image/jpeg",0.92),ocrImage);
+}
+function compressImage(dataUrl,cb){
+  var img=new Image();
+  img.onload=function(){
+    try{
+      var max=1280,scale=Math.min(1,max/Math.max(img.width,img.height));
+      var c=document.createElement("canvas");
+      c.width=Math.max(1,Math.round(img.width*scale));
+      c.height=Math.max(1,Math.round(img.height*scale));
+      c.getContext("2d").drawImage(img,0,0,c.width,c.height);
+      cb(c.toDataURL("image/jpeg",0.85));
+    }catch(e){setScanErr("图片处理失败："+e.message);}
+  };
+  img.onerror=function(){setScanErr("图片读取失败，请重试");};
+  img.src=dataUrl;
+}
+function setScanErr(msg){
+  var el=document.getElementById("scanErr");
+  if(el)el.textContent=msg;
+}
+// 调 GLM-4V-Flash 识别，提取昵称+抖音号
+function ocrImage(dataUrl){
+  setScanErr("⏳ 识别中，请稍候…");
+  fetch(GLM_URL,{
+    method:"POST",
+    headers:{"Content-Type":"application/json","Authorization":"Bearer "+GLM_KEY},
+    body:JSON.stringify({
+      model:GLM_MODEL,
+      messages:[{role:"user",content:[
+        {type:"image_url",image_url:{url:dataUrl}},
+        {type:"text",text:"这是一张抖音个人主页截图。请提取页面上的抖音账号信息，只输出JSON（不要markdown代码块，不要任何解释）：{\"nickname\":\"页面上的昵称\",\"douyin_id\":\"页面上的抖音号\"}。识别不到就填空字符串。"}
+      ]}]
+    })
+  }).then(function(r){return r.json();}).then(function(j){
+    var content=(j.choices&&j.choices[0]&&j.choices[0].message&&j.choices[0].message.content)||"";
+    if(!content){setScanErr("识别失败："+((j.error&&j.error.message)||"无返回")+"，可手动填写");return;}
+    showOcrResult(parseOcrJson(content));
+  }).catch(function(e){
+    setScanErr("识别失败："+e.message+"，可手动填写");
+  });
+}
+// 解析模型输出（容忍 ```json 围栏 / 多余文字 / 模型跑偏）
+function parseOcrJson(content){
+  var info={nick:"",id:""},t=String(content||"");
+  var m=t.match(/\{[\s\S]*\}/);
+  if(m){
+    try{
+      var o=JSON.parse(m[0]);
+      info.nick=String(o.nickname||o.nick||o.name||"").trim();
+      info.id=String(o.douyin_id||o.douyinId||o.id||o.dyid||"").trim();
+    }catch(e){}
+  }
+  if(!info.id&&!info.nick){
+    var tm=t.match(/抖音号\s*[:：是]?\s*([A-Za-z0-9_\-]{4,})/);
+    if(tm)info.id=tm[1];
+    // 优先精确匹配"昵称：xxx" / "昵称是 xxx"
+    var nm=t.match(/昵称\s*[:：是]?\s*([^\n，,。！!？?]{1,25})/);
+    if(nm)info.nick=nm[1].trim();
+    if(!info.nick){
+      var bad=["抖音","扫一扫","关注","图片","显示","内容","以上","就是","请","只","返回","识别","页面","提取","这是"];
+      var lines=t.split("\n").map(function(s){return s.trim();}).filter(function(s){return s&&s.length<25&&s.indexOf(":")<0&&s.indexOf("：")<0;});
+      for(var i=0;i<lines.length;i++){
+        var L=lines[i],isBad=false;
+        for(var j=0;j<bad.length;j++){if(L.indexOf(bad[j])>=0){isBad=true;break;}}
+        if(!isBad){info.nick=L;break;}
+      }
+    }
   }
   return info;
 }
-function handleScanResult(text){
-  var info=extractDouyinInfo(text);
-  var hint="";
-  if(!info.id&&!info.url)hint="<div class=\"r-note\">未识别到抖音链接，请手动填写</div>";
-  else if(!info.id)hint="<div class=\"r-note\">识别到主页链接（短链），ID 需手动填</div>";
-  showModal("<h3>扫码结果</h3>"
-    +hint
-    +"<div class=\"field\"><label>抖音ID</label><input id=\"sc_id\" value=\""+esc(info.id||"")+"\" placeholder=\"识别或手动填写\"></div>"
-    +"<div class=\"field\"><label>抖音昵称</label><input id=\"sc_nick\" value=\""+esc(info.nick||"")+"\" placeholder=\"昵称不在二维码里，请手动填写\"></div>"
-    +"<div class=\"field\"><label>主页链接</label><input id=\"sc_url\" value=\""+esc(info.url||"")+"\" placeholder=\"选填\"></div>"
+function showOcrResult(info){
+  showModal("<h3>识别结果</h3>"
+    +"<div style=\"font-size:12px;color:var(--faint);margin-bottom:8px\">已自动识别，可修改后保存</div>"
+    +"<div class=\"field\"><label>抖音ID</label><input id=\"sc_id\" value=\""+esc(info.id||"")+"\" placeholder=\"自动识别，可修改\"></div>"
+    +"<div class=\"field\"><label>抖音昵称</label><input id=\"sc_nick\" value=\""+esc(info.nick||"")+"\" placeholder=\"自动识别，可修改\"></div>"
     +"<div class=\"m-btns\"><button class=\"btn btn-ghost\" onclick=\"closeModal()\">取消</button><button class=\"btn btn-primary\" onclick=\"saveScanResult()\">保存到这台手机</button></div><div class=\"err\" id=\"sc_err\"></div>");
 }
 async function saveScanResult(){
   var id=document.getElementById("sc_id").value.trim();
   var nick=document.getElementById("sc_nick").value.trim();
-  var url=document.getElementById("sc_url").value.trim();
-  if(!id&&!nick&&!url){document.getElementById("sc_err").textContent="没有可保存的内容";return;}
+  if(!id&&!nick){document.getElementById("sc_err").textContent="没有可保存的内容";return;}
   var data={};
   if(id)data.douyin_id=id;
   if(nick)data.nickname=nick;
-  if(url)data.douyin_url=url;
   try{
     if(STATE.user.role==="member"){
       await apiPost("/api/actions/edit_my_asset",{asset_id:SCAN_FOR_ASSET,data:data});
