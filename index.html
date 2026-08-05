@@ -319,6 +319,11 @@ function getUsers(tk){
     D.users.filter(function(m){return m.role==="member"&&m.parent_id===u.id;}).forEach(function(m){
       list.push({id:m.id,name:m.name,username:m.username,role:"member",created:m.created,members:[]});
     });
+  }else if(u.role==="member"){
+    // v12.9 修复：员工能看到同组同事（转让弹窗选接收人用），跨组不可见
+    D.users.filter(function(m){return m.role==="member"&&m.parent_id===u.parent_id&&m.id!==u.id;}).forEach(function(m){
+      list.push({id:m.id,name:m.name,username:m.username,role:"member",created:m.created,members:[]});
+    });
   }
   return[200,{users:list,role:u.role}];
 }
@@ -2092,15 +2097,14 @@ async function renderMyDevList(){
 }
 // v12.8：员工转让手机（A 发起 → B 确认）
 async function showTransfer(assetId){
-  var data=await apiGet("/api/users");
   var assets=await apiGet("/api/assets");
   var a=assets.assets.find(function(x){return x.id===assetId;});
   if(!a){toast("设备不存在","err");return;}
-  // 同组员工列表（主管直属员工之间/同组长员工之间）
+  // 同组员工列表（直接读全量 D.users，按 parent_id 判定同组）
   var my=D.users.find(function(x){return x.id===STATE.user.id;});
   var gid=my?my.parent_id:"";
   var opts="<option value=\"\">选择接收员工…</option>";
-  (data.users||[]).forEach(function(u){
+  (D.users||[]).forEach(function(u){
     if(u.role==="member"&&u.id!==STATE.user.id){
       var same=gid?(u.parent_id===gid):true;
       if(same)opts+="<option value=\""+u.id+"\">"+esc(u.name)+"</option>";
