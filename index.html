@@ -90,8 +90,10 @@ tr:hover td{background:#fafbfd}
 .mb{margin-bottom:16px}
 .empty{text-align:center;padding:36px 0;color:var(--faint)}
 .filter-bar{display:flex;gap:10px;align-items:center;margin-bottom:16px;flex-wrap:wrap}
-.filter-bar select,.filter-bar input{height:38px;border:1.5px solid var(--line);border-radius:9px;padding:0 12px;font-size:13px;background:#fff;color:var(--ink);outline:none}
+.filter-bar select,.link-btn{background:none;border:none;color:var(--accent,#0a84ff);cursor:pointer;font-size:13px;padding:0;text-decoration:underline}
+.filter-bar input{height:38px;border:1.5px solid var(--line);border-radius:9px;padding:0 12px;font-size:13px;background:#fff;color:var(--ink);outline:none}
 .filter-bar select:focus,.filter-bar input:focus{border-color:var(--blue)}
+.link-btn{background:none;border:none;color:var(--accent,#0a84ff);cursor:pointer;font-size:13px;padding:0;text-decoration:underline}
 .filter-bar input{width:200px}
 
 /* 弹窗 */
@@ -184,8 +186,9 @@ var LK="device_db_v2";
 var DEFAULT_FIELDS=[
   {id:"type",label:"设备类型",type:"select",options:["手机","电脑","平板","其他"],required:true},
   {id:"model",label:"手机型号",type:"select",options:["iPhone 13","iPhone 14","iPhone 15","Mate60","Mate60 Pro","Redmi K70","其他"],required:true},
-  {id:"phone",label:"手机号码",type:"input",placeholder:"如：13800008888",required:true},
-  {id:"card",label:"手机卡类型",type:"select",options:["移动","联通","电信","其他"],required:true},
+  {id:"phone",label:"手机号码",type:"input",placeholder:"如：13800008888",required:false},
+  {id:"card",label:"手机卡类型",type:"select",options:["移动","联通","电信","其他"],required:false},
+  {id:"sn",label:"手机编号",type:"input",placeholder:"如：IMEI/SN（不可重复）",required:false},
   {id:"platform",label:"抖音平台",type:"select",options:["抖音","抖音极速版","抖音火山版"],required:false},
   {id:"nickname",label:"抖音昵称",type:"input",placeholder:"抖音昵称",required:false},
   {id:"douyin_id",label:"抖音ID",type:"input",placeholder:"如：dy123456",required:false},
@@ -198,7 +201,11 @@ function mergeFields(d){
   var mf=d.fields.find(function(x){return x.label==="手机型号"&&x.type==="input";});
   if(mf){mf.type="select";mf.options=["iPhone 13","iPhone 14","iPhone 15","Mate60","Mate60 Pro","Redmi K70","其他"];mf.placeholder="";}
   DEFAULT_FIELDS.forEach(function(f){
-    if(!d.fields.find(function(x){return x.label===f.label;})){
+    var ex=d.fields.find(function(x){return x.label===f.label;});
+    if(ex){
+      if(f.required!==undefined)ex.required=f.required;
+      if(f.placeholder)ex.placeholder=f.placeholder;
+    }else{
       d.fields.push(JSON.parse(JSON.stringify(f)));
     }
   });
@@ -366,12 +373,16 @@ function postAsset(tk,b){
   var u=verify(tk);if(!u)return[401,{error:"未登录"}];
   if(!b.data||!b.data.type)return[400,{error:"请选择设备类型"}];
   var data={};for(var k in b.data)data[k]=b.data[k];
+  var snId=findFieldId("手机编号");
+  if(snId&&data[snId]&&D.assets.find(function(x){return x.data&&x.data[snId]===data[snId]&&x.status!=="deleted";}))return[400,{error:"手机编号已存在，不能重复"}];
   D.assets.push({id:uid(),data:data,status:"in_use",created:nowStr(),created_by:u.id,created_by_name:u.name});
   sv();return[200,{ok:true}];
 }
+function findFieldId(label){var f=D.fields.find(function(x){return x.label===label;});return f?f.id:null;}
 function assetName(a){
   var parts=[];
   ["type","model","phone"].forEach(function(k){if(a.data&&a.data[k])parts.push(a.data[k]);});
+  if(a.data&&a.data.sn)parts.push("编号:"+a.data.sn);
   return parts.join(" · ")||"未命名设备";
 }
 
@@ -545,6 +556,27 @@ function actionTake(tk,b){
   D.uses.push({id:uid(),asset_id:a.id,asset_name:assetName(a),user_id:u.id,user_name:u.name,take_time:nowStr(),return_time:""});
   sv();return[200,{ok:true}];
 }
+function editAsset(tk,b){
+  var u=verify(tk);if(!u)return[401,{error:"未登录"}];
+  if(u.role!=="supervisor"&&u.role!=="leader")return[403,{error:"无权限"}];
+  var a=D.assets.find(function(x){return x.id===b.asset_id;});if(!a)return[404,{error:"设备不存在"}];
+  if(u.role==="leader"&&!inScope(u,a.created_by))return[403,{error:"只能修改自己组的设备"}];
+  for(var k in b.data)a.data[k]=b.data[k];
+  var snId=findFieldId("手机编号");
+  if(snId&&a.data[snId]&&D.assets.find(function(x){return x.data&&x.data[snId]===a.data[snId]&&x.id!==a.id&&x.status!=="deleted";}))return[400,{error:"手机编号已存在，不能重复"}];
+  sv();return[200,{ok:true}];
+}
+function editMyAsset(tk,b){
+  var u=verify(tk);if(!u)return[401,{error:"未登录"}];
+  var a=D.assets.find(function(x){return x.id===b.asset_id;});if(!a)return[404,{error:"设备不存在"}];
+  if(a.created_by!==u.id)return[403,{error:"只能修改自己登记的设备"}];
+  var lockIds=["手机号码","手机型号","手机编号"].map(findFieldId).filter(Boolean);
+  for(var k in b.data){
+    if(lockIds.indexOf(k)>=0)continue;
+    a.data[k]=b.data[k];
+  }
+  sv();return[200,{ok:true}];
+}
 function actionDelete(tk,b){
   var u=verify(tk);if(!u)return[401,{error:"未登录"}];
   if(u.role!=="supervisor"&&u.role!=="leader")return[403,{error:"无权限"}];
@@ -610,6 +642,8 @@ function route(method,path,tk,body){
   if(path==="/api/actions/delete"&&method==="POST")return actionDelete(tk,body);
   if(path==="/api/actions/asset_status"&&method==="POST")return actionSetStatus(tk,body);
   if(path==="/api/actions/return_asset"&&method==="POST")return actionReturnAsset(tk,body);
+  if(path==="/api/actions/edit_asset"&&method==="POST")return editAsset(tk,body);
+  if(path==="/api/actions/edit_my_asset"&&method==="POST")return editMyAsset(tk,body);
   if(path==="/api/requests/batch"&&method==="POST")return batchRequest(tk,body);
   if(pp[1]==="api"&&pp[2]==="users"&&pp.length===4&&method==="DELETE")return delUser(tk,pp[3]);
   if(pp[1]==="api"&&pp[2]==="fields"&&pp.length===4&&method==="DELETE")return delField(tk,pp[3]);
@@ -637,7 +671,7 @@ window.fetch=function(url,opts){
 
 // ============ 前端 ============
 var ROLE_LABELS={supervisor:"主管",leader:"组长",member:"员工"};
-var STATE={user:null},CURRENT_PAGE="";
+var STATE={user:null},CURRENT_PAGE="",ASSET_FILTER="";
 var REQ_TYPES={take:["领用","tag-blue"],repair:["报修","tag-orange"],return:["退还","tag-purple"],delete:["删除","tag-red"]};
 var REQ_STATUS={pending:["待审核","tag-orange"],approved:["已同意","tag-green"],rejected:["已拒绝","tag-red"],cancelled:["已撤销","tag-gray"]};
 
@@ -844,8 +878,35 @@ async function renderAssets(){
   var h="<div class=\"page-title\">设备台账</div><div class=\"page-desc\">全部设备登记与状态（主管可直接管理）</div>";
   h+="<div class=\"kpi-row\">"+kpiCard("设备总数","#0a84ff",st.total)+kpiCard("在库","#34c759",st.available)+kpiCard("已领用","#7c5cff",st.inUse)+kpiCard("维修中","#ff9500",st.repairing)+"</div>";
   h+="<div class=\"filter-bar\"><select id=\"astFilter\" onchange=\"renderAssetTable()\"><option value=\"\">全部状态</option><option value=\"available\">在库</option><option value=\"in_use\">已领用</option><option value=\"repairing\">维修中</option><option value=\"scrapped\">已报废</option></select><input id=\"astSearch\" placeholder=\"搜索名称/编号/登记人\" oninput=\"renderAssetTable()\"><button class=\"btn btn-primary\" onclick=\"showAddAsset()\">＋ 登记设备</button></div>";
+  h+="<div class=\"filter-bar\" style=\"flex-wrap:wrap;gap:6px\" id=\"personBar\">加载人员…</div>";
   h+="<div class=\"card\"><div class=\"c-head\"><h3>设备列表</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th>设备</th><th>登记人</th><th>状态</th><th>登记时间</th><th>操作</th></tr></thead><tbody id=\"assetTableBody\"></tbody></table></div></div>";
   document.getElementById("content").innerHTML=h;
+  renderPersonBar();
+  renderAssetTable();
+}
+async function renderPersonBar(){
+  var bar=document.getElementById("personBar");if(!bar)return;
+  try{
+    var data=await apiGet("/api/users");
+    var people=[{id:"",name:"👥 全部"}];
+    (data.users||[]).forEach(function(u){
+      if(u.role==="leader"){
+        people.push({id:u.id,name:u.name+"（组长）"});
+        (u.members||[]).forEach(function(m){people.push({id:m.id,name:m.name});});
+      }else{
+        people.push({id:u.id,name:u.name});
+      }
+    });
+    var h="<span style=\"font-size:12px;color:var(--faint);line-height:28px\">按人查看：</span>";
+    people.forEach(function(p){
+      h+="<span class=\"chip"+(ASSET_FILTER===p.id?" on":"")+"\" data-v=\""+p.id+"\" onclick=\"filterByUser(this)\">"+esc(p.name)+"</span>";
+    });
+    bar.innerHTML=h;
+  }catch(e){bar.innerHTML="";}
+}
+function filterByUser(el){
+  ASSET_FILTER=el.getAttribute("data-v");
+  renderPersonBar();
   renderAssetTable();
 }
 async function renderAssetTable(){
@@ -853,11 +914,12 @@ async function renderAssetTable(){
   var useData=await apiGet("/api/uses");
   var f=document.getElementById("astFilter")?document.getElementById("astFilter").value:"";
   var kw=document.getElementById("astSearch")?(document.getElementById("astSearch").value||"").trim():"";
-  var list=data.assets.filter(function(a){return (!f||a.status===f)&&(!kw||(assetName(a)+" "+(a.data&&a.data.model||"")+" "+(a.data&&a.data.phone||"")+" "+(a.data&&a.data.nickname||"")+" "+(a.data&&a.data.douyin_id||"")+" "+a.created_by_name).indexOf(kw)>=0);});
+  var list=data.assets.filter(function(a){return (!f||a.status===f)&&(!ASSET_FILTER||a.created_by===ASSET_FILTER)&&(!kw||(assetName(a)+" "+(a.data&&a.data.sn||"")+" "+(a.data&&a.data.model||"")+" "+(a.data&&a.data.phone||"")+" "+(a.data&&a.data.nickname||"")+" "+(a.data&&a.data.douyin_id||"")+" "+a.created_by_name).indexOf(kw)>=0);});
   var h="";
   list.forEach(function(a){
     var code=a.data&&a.data.code?"<span style=\"color:var(--faint);font-size:12px\">"+esc(a.data.code)+"</span>":"";
-    h+="<tr><td><b>"+esc(assetName(a))+"</b> "+code+"</td><td>"+esc(a.created_by_name)+"</td><td>"+assetTag(a.status)+"</td><td class=\"num\">"+esc(a.created)+"</td><td>";
+    h+="<tr><td><b>"+esc(assetName(a))+"</b> "+code+"</td><td><button class=\"link-btn\" onclick=\"filterByUser(this)\" data-v=\""+a.created_by+"\">"+esc(a.created_by_name)+"</button></td><td>"+assetTag(a.status)+"</td><td class=\"num\">"+esc(a.created)+"</td><td>";
+    if(STATE.user.role!=="member")h+="<button class=\"btn btn-sm btn-ghost\" onclick=\"openEditAsset('"+a.id+"',0)\" style=\"margin-right:6px\">编辑</button>";
     if(a.status==="available"){
       h+="<button class=\"btn btn-sm btn-green\" onclick=\"showDirectTake('"+a.id+"')\">直接领用</button> ";
       h+="<button class=\"btn btn-sm btn-danger\" onclick=\"directDelAsset('"+a.id+"')\">删除</button>";
@@ -923,6 +985,54 @@ async function addAsset(){
   try{
     await apiPost("/api/assets",{data:fd});
     toast("登记成功");closeModal();
+    if(STATE.user.role==="member"){renderMyDevList();}else{renderAssetTable();}
+  }catch(e){document.getElementById("a_err").textContent=e.message;}
+}
+// ===== 编辑设备弹窗 =====
+var EDIT_ORIG=null,EDIT_LOCKIDS=[];
+async function openEditAsset(id,isMember){
+  try{
+    var data=await apiGet("/api/fields");
+    var assets=await apiGet("/api/assets");
+    var a=assets.assets.find(function(x){return x.id===id;});
+    if(!a){toast("设备不存在","err");return;}
+    EDIT_ORIG=a.data||{};
+    var lockLabels=["手机号码","手机型号","手机编号"];
+    EDIT_LOCKIDS=[];
+    data.fields.forEach(function(f){if(lockLabels.indexOf(f.label)>=0)EDIT_LOCKIDS.push(f.id);});
+    var locked=(isMember===1||isMember==="1");
+    var h="<h3>编辑设备"+(locked?"（手机号码/型号/编号不可修改）":"")+"</h3><div id=\"assetForm\">";
+    data.fields.forEach(function(f){
+      var cur=(a.data&&a.data[f.id])?a.data[f.id]:"";
+      var lock=locked&&EDIT_LOCKIDS.indexOf(f.id)>=0;
+      h+="<div class=\"field\"><label>"+esc(f.label)+(f.required?"<span class=\"req\"> *</span>":"")+(lock?"<span style=\"color:var(--faint);font-size:11px\">（不可修改）</span>":"")+"</label>";
+      if(f.type==="select"){
+        h+="<div class=\"chip-row\" id=\"f_"+f.id+"\">";
+        f.options.forEach(function(o){h+="<span class=\"chip"+(cur===o?" on":"")+"\" data-v=\""+esc(o)+"\" onclick=\"pickChip(this)\" style=\"opacity:"+(lock?"0.5":"1")+"\">"+esc(o)+"</span>";});
+        h+="</div>";
+      }else{
+        h+="<input id=\"f_"+f.id+"\" placeholder=\""+esc(f.placeholder||"请输入")+"\" value=\""+esc(cur)+"\" "+(lock?"disabled":"")+">";
+      }
+      h+="</div>";
+    });
+    h+="</div><div class=\"m-btns\"><button class=\"btn btn-ghost\" onclick=\"closeModal()\">取消</button><button class=\"btn btn-primary\" onclick=\"saveEditAsset('"+id+"','"+(locked?"1":"0")+"')\">保存修改</button></div><div class=\"err\" id=\"a_err\"></div>";
+    showModal(h);
+  }catch(e){toast(e.message,"err");}
+}
+async function saveEditAsset(id,isMember){
+  var data=await apiGet("/api/fields");
+  var locked=isMember==="1";
+  var fd={};
+  for(var i=0;i<data.fields.length;i++){
+    var f=data.fields[i];
+    if(locked&&EDIT_LOCKIDS.indexOf(f.id)>=0){fd[f.id]=EDIT_ORIG[f.id]||"";continue;}
+    var v=getFieldValue(f.id);
+    if(f.required&&!v){document.getElementById("a_err").textContent="请选择「"+f.label+"」";return;}
+    fd[f.id]=v;
+  }
+  try{
+    await apiPost(locked?"/api/actions/edit_my_asset":"/api/actions/edit_asset",{asset_id:id,data:fd});
+    toast("已保存");closeModal();
     if(STATE.user.role==="member"){renderMyDevList();}else{renderAssetTable();}
   }catch(e){document.getElementById("a_err").textContent=e.message;}
 }
@@ -1177,6 +1287,7 @@ async function renderMyDevList(){
     var myUse=uses.uses.find(function(x){return x.asset_id===a.id&&!x.return_time;});
     var myReq=reqs.requests.find(function(x){return x.asset_id===a.id&&x.user_id===STATE.user.id&&x.status==="pending";});
     h+="<tr><td><b>"+esc(assetName(a))+"</b> "+code+"</td><td>"+assetTag(a.status)+(myReq?"<br><span style=\"font-size:11px;color:var(--orange)\">待审中</span>":"")+"</td><td class=\"num\">"+esc(a.created)+"</td><td style=\"white-space:nowrap\">";
+    if(a.created_by===STATE.user.id)h+="<button class=\"btn btn-sm btn-ghost\" onclick=\"openEditAsset('"+a.id+"',1)\" style=\"margin-right:6px\">编辑</button>";
     if(a.status==="available"){
       h+="<button class=\"btn btn-sm btn-green\" onclick=\"setStatus('"+a.id+"','in_use')\">在用</button> ";
       h+="<button class=\"btn btn-sm btn-orange\" onclick=\"reqRepair('"+a.id+"')\">报修申请</button> ";
