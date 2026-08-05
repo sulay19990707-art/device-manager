@@ -1043,6 +1043,17 @@ async function submitHandle(id,action){
 }
 
 // ===== 主管：设备台账 =====
+// v12.3：设备信息完整展示（所有字段），在库设备使用人=登记人（谁录的谁在用）
+function assetFullHtml(a, fields){
+  var d=a.data||{};
+  var parts=[];
+  (fields||[]).forEach(function(f){
+    var v=d[f.id];
+    if(v&&String(v).trim())parts.push("<b>"+esc(f.label)+":</b> "+esc(v));
+  });
+  if(d.sn&&!parts.some(function(p){return p.indexOf("编号")>=0;}))parts.push("<b>编号:</b> "+esc(d.sn));
+  return parts.join("<br>")||"未命名设备";
+}
 async function renderAssets(){
   var data=await apiGet("/api/stats");
   var st=data.stats||{};
@@ -1083,6 +1094,7 @@ function filterByUser(el){
 async function renderAssetTable(){
   var data=await apiGet("/api/assets");
   var useData=await apiGet("/api/uses");
+  var fieldsData=await apiGet("/api/fields");
   var f=document.getElementById("astFilter")?document.getElementById("astFilter").value:"";
   var kw=document.getElementById("astSearch")?(document.getElementById("astSearch").value||"").trim():"";
   var list=data.assets.filter(function(a){return (!f||a.status===f)&&(!ASSET_FILTER||a.created_by===ASSET_FILTER)&&(!kw||(assetName(a)+" "+(a.data&&a.data.sn||"")+" "+(a.data&&a.data.model||"")+" "+(a.data&&a.data.phone||"")+" "+(a.data&&a.data.nickname||"")+" "+(a.data&&a.data.douyin_id||"")+" "+a.created_by_name).indexOf(kw)>=0);});
@@ -1090,7 +1102,9 @@ async function renderAssetTable(){
   list.forEach(function(a){
     var code=a.data&&a.data.code?"<span style=\"color:var(--faint);font-size:12px\">"+esc(a.data.code)+"</span>":"";
     var myUse=useData.uses.find(function(x){return x.asset_id===a.id&&!x.return_time;});
-    h+="<tr><td><b>"+esc(assetName(a))+"</b> "+code+"</td><td><button class=\"link-btn\" onclick=\"filterByUser(this)\" data-v=\""+a.created_by+"\">"+esc(a.created_by_name)+"</button></td><td>"+(myUse?"<b>"+esc(myUse.user_name)+"</b>":"<span style=\"color:var(--faint)\">—</span>")+"</td><td>"+assetTag(a.status)+"</td><td class=\"num\">"+esc(a.created)+"</td><td>";
+    // v12.3：在库设备显示登记人（谁录的谁在用），在用显示实际使用人
+    var showUser=myUse?myUse.user_name:(a.status==="available"?a.created_by_name:"");
+    h+="<tr><td><b>"+esc(assetName(a))+"</b> "+code+"<br><span style=\"color:var(--faint);font-size:12px\">"+assetFullHtml(a,fieldsData.fields)+"</span></td><td><button class=\"link-btn\" onclick=\"filterByUser(this)\" data-v=\""+a.created_by+"\">"+esc(a.created_by_name)+"</button></td><td>"+(showUser?"<b>"+esc(showUser)+"</b>":"<span style=\"color:var(--faint)\">—</span>")+"</td><td>"+assetTag(a.status)+"</td><td class=\"num\">"+esc(a.created)+"</td><td>";
     if(STATE.user.role!=="member")h+="<button class=\"btn btn-sm btn-ghost\" onclick=\"openEditAsset('"+a.id+"',0)\" style=\"margin-right:6px\">编辑</button>";
     if(a.status==="available"){
       h+="<button class=\"btn btn-sm btn-green\" onclick=\"showDirectTake('"+a.id+"')\">直接领用</button> ";
@@ -1625,7 +1639,7 @@ async function renderWarehouse(){
   h+="</select><select id=\"whStatus\" onchange=\"renderWarehouseTable()\"><option value=\"\">全部状态</option><option value=\"available\">在库</option><option value=\"in_use\">已领用</option><option value=\"repairing\">维修中</option></select></div>";
   h+="<div class=\"filter-bar\" style=\"flex-wrap:wrap\" id=\"whModelBar\">加载型号…</div>";
   h+="<div class=\"mb\" style=\"display:flex;gap:10px;align-items:center\"><button class=\"btn btn-primary\" id=\"whTakeBtn\" onclick=\"whBatchTake()\">📥 申请领用所选 (0)</button><span id=\"whSelInfo\" style=\"font-size:13px;color:var(--sub)\"></span></div>";
-  h+="<div class=\"card\"><div class=\"c-head\"><h3>手机列表</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th style=\"width:36px\"><input type=\"checkbox\" id=\"whAll\" onchange=\"whToggleAll(this)\"></th><th>设备</th><th>状态</th><th>登记人</th><th>登记时间</th></tr></thead><tbody id=\"whBody\"></tbody></table></div></div>";
+  h+="<div class=\"card\"><div class=\"c-head\"><h3>手机列表</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th style=\"width:36px\"><input type=\"checkbox\" id=\"whAll\" onchange=\"whToggleAll(this)\"></th><th>设备</th><th>状态</th><th>使用人</th><th>登记人</th><th>登记时间</th></tr></thead><tbody id=\"whBody\"></tbody></table></div></div>";
   document.getElementById("content").innerHTML=h;
   renderWhModelBar();
   renderWarehouseTable();
@@ -1645,6 +1659,8 @@ async function renderWhModelBar(){
 function filterWhModel(el){WH_MODEL=el.getAttribute("data-v");renderWhModelBar();renderWarehouseTable();}
 async function renderWarehouseTable(){
   var data=await apiGet("/api/warehouse");
+  var useData=await apiGet("/api/uses");
+  var fieldsData=await apiGet("/api/fields");
   var kw=document.getElementById("whSearch")?(document.getElementById("whSearch").value||"").trim():"";
   var mf=WH_MODEL;
   var cf=document.getElementById("whCard")?document.getElementById("whCard").value:"";
@@ -1657,9 +1673,12 @@ async function renderWarehouseTable(){
     if(sf&&a.status!==sf)return;
     if(kw&&(assetName(a)+" "+(d.model||"")+" "+(d.phone||"")+" "+(d.sn||"")+" "+a.created_by_name).indexOf(kw)<0)return;
     var canTake=a.status==="available";
-    h+="<tr><td><input type=\"checkbox\" class=\"wh-chk\" value=\""+a.id+"\" "+(canTake?"":"disabled")+" onchange=\"whUpdateSel()\"></td><td><b>"+esc(assetName(a))+"</b></td><td>"+assetTag(a.status)+(canTake?"":"<br><span style=\"font-size:11px;color:var(--faint)\">不可领用</span>")+"</td><td>"+esc(a.created_by_name)+"</td><td class=\"num\">"+esc(a.created)+"</td></tr>";
+    var myUse=useData.uses.find(function(x){return x.asset_id===a.id&&!x.return_time;});
+    // v12.3：在库设备显示登记人（谁录的谁在用），在用显示实际使用人
+    var showUser=myUse?myUse.user_name:(a.status==="available"?a.created_by_name:"");
+    h+="<tr><td><input type=\"checkbox\" class=\"wh-chk\" value=\""+a.id+"\" "+(canTake?"":"disabled")+" onchange=\"whUpdateSel()\"></td><td><b>"+esc(assetName(a))+"</b><br><span style=\"color:var(--faint);font-size:12px\">"+assetFullHtml(a,fieldsData.fields)+"</span></td><td>"+assetTag(a.status)+(canTake?"":"<br><span style=\"font-size:11px;color:var(--faint)\">不可领用</span>")+"</td><td>"+(showUser?"<b>"+esc(showUser)+"</b>":"<span style=\"color:var(--faint)\">—</span>")+"</td><td>"+esc(a.created_by_name)+"</td><td class=\"num\">"+esc(a.created)+"</td></tr>";
   });
-  if(!h)h="<tr><td colspan=\"5\" class=\"empty\">暂无符合条件的手机</td></tr>";
+  if(!h)h="<tr><td colspan=\"6\" class=\"empty\">暂无符合条件的手机</td></tr>";
   document.getElementById("whBody").innerHTML=h;
   whUpdateSel();
 }
@@ -1722,7 +1741,9 @@ async function renderMyDevList(){
     if(kw&&(assetName(a)+" "+(d.model||"")+" "+(d.phone||"")+" "+(d.sn||"")).indexOf(kw)<0)return;
     var myUse=uses.uses.find(function(x){return x.asset_id===a.id&&!x.return_time;});
     var myReq=reqs.requests.find(function(x){return x.asset_id===a.id&&x.user_id===STATE.user.id&&x.status==="pending";});
-    h+="<tr><td>"+esc(d.type||"—")+"</td><td>"+esc(d.model||"—")+"</td><td>"+esc(d.phone||"—")+"</td><td>"+esc(d.sn||"—")+"</td><td>"+assetTag(a.status)+(myUse?"<br><span style=\"font-size:11px;color:var(--faint)\">使用人："+esc(myUse.user_name)+"</span>":"")+(myReq?"<br><span style=\"font-size:11px;color:var(--orange)\">审核中</span>":"")+"</td><td style=\"white-space:nowrap\">";
+    // v12.3：在库设备显示登记人（谁录的谁在用），在用显示实际使用人
+    var showUser=myUse?myUse.user_name:(a.status==="available"?a.created_by_name:"");
+    h+="<tr><td>"+esc(d.type||"—")+"</td><td>"+esc(d.model||"—")+"</td><td>"+esc(d.phone||"—")+"</td><td>"+esc(d.sn||"—")+"</td><td>"+assetTag(a.status)+(showUser?"<br><span style=\"font-size:11px;color:var(--faint)\">使用人："+esc(showUser)+"</span>":"")+(myReq?"<br><span style=\"font-size:11px;color:var(--orange)\">审核中</span>":"")+"</td><td style=\"white-space:nowrap\">";
     if(a.status==="in_use"){
       h+="<button class=\"btn btn-sm btn-orange\" onclick=\"reqReturn('"+a.id+"')\">退回仓库</button> ";
       h+="<button class=\"btn btn-sm btn-orange\" onclick=\"reqRepair('"+a.id+"')\">报修申请</button> ";
