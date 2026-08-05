@@ -366,7 +366,7 @@ function postAsset(tk,b){
   var u=verify(tk);if(!u)return[401,{error:"未登录"}];
   if(!b.data||!b.data.type)return[400,{error:"请选择设备类型"}];
   var data={};for(var k in b.data)data[k]=b.data[k];
-  D.assets.push({id:uid(),data:data,status:"available",created:nowStr(),created_by:u.id,created_by_name:u.name});
+  D.assets.push({id:uid(),data:data,status:"in_use",created:nowStr(),created_by:u.id,created_by_name:u.name});
   sv();return[200,{ok:true}];
 }
 function assetName(a){
@@ -431,6 +431,17 @@ function approveRequest(tk,id,b){
   r.status="approved";r.handled_by=u.name;r.handled_at=nowStr();r.note=b&&b.note?b.note:"";
   sv();return[200,{ok:true}];
 }
+function actionReturnAsset(tk,b){
+  var u=verify(tk);if(!u)return[401,{error:"未登录"}];
+  if(u.role!=="supervisor"&&u.role!=="leader")return[403,{error:"无权限"}];
+  var a=D.assets.find(function(x){return x.id===b.asset_id;});
+  if(!a)return[404,{error:"设备不存在"}];
+  if(u.role==="leader"&&!inScope(u,a.created_by))return[403,{error:"只能归还自己组的设备"}];
+  var rec=D.uses.find(function(x){return x.asset_id===a.id&&!x.return_time;});
+  if(rec)rec.return_time=nowStr();
+  if(a.status==="in_use")a.status="available";
+  sv();return[200,{ok:true}];
+}
 function cancelRequest(tk,id){
   var u=verify(tk);if(!u)return[401,{error:"未登录"}];
   var r=D.requests.find(function(x){return x.id===id;});
@@ -451,6 +462,20 @@ function actionSetStatus(tk,b){
   if(a.status==="repairing"||a.status==="scrapped"||a.status==="deleted")return[400,{error:"当前状态不可切换"}];
   a.status=ns;
   sv();return[200,{ok:true}];
+}
+function batchRequest(tk,b){
+  var u=verify(tk);if(!u)return[401,{error:"未登录"}];
+  if(u.role!=="supervisor"&&u.role!=="leader")return[403,{error:"无权限"}];
+  var ids=b.ids||[],action=b.action,note=b.note||"";
+  var ok=0;
+  ids.forEach(function(id){
+    var r=D.requests.find(function(x){return x.id===id;});
+    if(!r||r.status!=="pending")return;
+    if(u.role==="leader"&&!inScope(u,r.user_id))return;
+    if(action==="approve"){if(approveRequest(tk,id,{note:note})[0]<400)ok++;}
+    else if(action==="reject"){if(rejectRequest(tk,id,{note:note})[0]<400)ok++;}
+  });
+  return[200,{ok:true,count:ok}];
 }
 function rejectRequest(tk,id,b){
   var u=verify(tk);if(!u)return[401,{error:"未登录"}];
@@ -584,6 +609,8 @@ function route(method,path,tk,body){
   if(path==="/api/actions/take"&&method==="POST")return actionTake(tk,body);
   if(path==="/api/actions/delete"&&method==="POST")return actionDelete(tk,body);
   if(path==="/api/actions/asset_status"&&method==="POST")return actionSetStatus(tk,body);
+  if(path==="/api/actions/return_asset"&&method==="POST")return actionReturnAsset(tk,body);
+  if(path==="/api/requests/batch"&&method==="POST")return batchRequest(tk,body);
   if(pp[1]==="api"&&pp[2]==="users"&&pp.length===4&&method==="DELETE")return delUser(tk,pp[3]);
   if(pp[1]==="api"&&pp[2]==="fields"&&pp.length===4&&method==="DELETE")return delField(tk,pp[3]);
   if(pp[1]==="api"&&pp[2]==="fields"&&pp.length===4&&method==="POST")return postFieldOption(tk,pp[3],body);
@@ -757,12 +784,15 @@ async function renderReviewList(){
   var pending=data.requests.filter(function(r){return r.status==="pending";});
   var done=data.requests.filter(function(r){return r.status!=="pending";});
   var h="";
-  if(!pending.length)h="<div class=\"empty\">暂无待审核申请</div>";
+  if(pending.length){
+    h+="<div style=\"margin-bottom:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap\"><label style=\"font-size:13px;display:flex;align-items:center;gap:6px;cursor:pointer\"><input type=\"checkbox\" id=\"selAll\" onchange=\"toggleAll()\"> 全选</label><button class=\"btn btn-sm btn-green\" onclick=\"batchHandle('approve')\">✔ 批量同意</button><button class=\"btn btn-sm btn-danger\" onclick=\"batchHandle('reject')\">✘ 批量拒绝</button><span id=\"selCount\" style=\"font-size:12px;color:var(--faint)\"></span></div>";
+  }
+  if(!pending.length)h+="<div class=\"empty\">暂无待审核申请</div>";
   pending.forEach(function(r){
     var detail=r.type==="repair"?("故障："+esc(r.desc)):(r.type==="delete"?("原因："+esc(r.reason)):"");
-    h+="<div class=\"req-item\"><div class=\"r-top\">"+reqTypeTag(r.type)+"<b>"+esc(r.asset_name)+"</b><span style=\"color:var(--faint);font-size:12px\">"+esc(r.user_name)+" · "+esc(r.created)+"</span></div>"
+    h+="<div class=\"req-item\" style=\"display:flex;gap:10px;align-items:flex-start\"><input type=\"checkbox\" class=\"req-chk\" value=\""+r.id+"\" style=\"margin-top:5px;flex-shrink:0\" onchange=\"updateSelCount()\"><div style=\"flex:1\"><div class=\"r-top\">"+reqTypeTag(r.type)+"<b>"+esc(r.asset_name)+"</b><span style=\"color:var(--faint);font-size:12px\">"+esc(r.user_name)+" · "+esc(r.created)+"</span></div>"
       +(detail?"<div class=\"r-desc\">"+detail+"</div>":"")
-      +"<div class=\"r-actions\"><button class=\"btn btn-sm btn-green\" onclick=\"handleReq('"+r.id+"','approve')\">✔ 同意</button><button class=\"btn btn-sm btn-danger\" onclick=\"handleReq('"+r.id+"','reject')\">✘ 不同意</button></div></div>";
+      +"<div class=\"r-actions\"><button class=\"btn btn-sm btn-green\" onclick=\"handleReq('"+r.id+"','approve')\">✔ 同意</button><button class=\"btn btn-sm btn-danger\" onclick=\"handleReq('"+r.id+"','reject')\">✘ 不同意</button></div></div></div>";
   });
   document.getElementById("reviewBody").innerHTML=h;
   var h2="";
@@ -772,6 +802,21 @@ async function renderReviewList(){
       +"<div class=\"r-note\">处理人："+esc(r.handled_by||"—")+" · "+esc(r.handled_at||"—")+(r.note?" · 备注："+esc(r.note):"")+"</div></div>";
   });
   document.getElementById("reviewHistory").innerHTML=h2;
+}
+function toggleAll(){var all=document.getElementById("selAll").checked;Array.prototype.forEach.call(document.querySelectorAll(".req-chk"),function(c){c.checked=all;});updateSelCount();}
+function updateSelCount(){var el=document.getElementById("selCount");if(el){var n=document.querySelectorAll(".req-chk:checked").length;el.textContent=n?("已选 "+n+" 条"):"";}}
+function selectedIds(){return Array.prototype.map.call(document.querySelectorAll(".req-chk:checked"),function(c){return c.value;});}
+async function batchHandle(action){
+  var ids=selectedIds();
+  if(!ids.length){toast("请先勾选要处理的申请","err");return;}
+  var note="";
+  if(action==="reject"){note=prompt("批量拒绝原因（可选）：")||"";}
+  else{note=prompt("备注（可选）：")||"";}
+  try{
+    var r=await apiPost("/api/requests/batch",{ids:ids,action:action,note:note});
+    toast(action==="approve"?"✔ 已批量同意 "+r.count+" 条":"✘ 已批量拒绝 "+r.count+" 条");
+    renderReviewList();refreshBadges();
+  }catch(e){toast(e.message,"err");}
 }
 function handleReq(id,action){
   if(action==="approve"){
@@ -805,6 +850,7 @@ async function renderAssets(){
 }
 async function renderAssetTable(){
   var data=await apiGet("/api/assets");
+  var useData=await apiGet("/api/uses");
   var f=document.getElementById("astFilter")?document.getElementById("astFilter").value:"";
   var kw=document.getElementById("astSearch")?(document.getElementById("astSearch").value||"").trim():"";
   var list=data.assets.filter(function(a){return (!f||a.status===f)&&(!kw||(assetName(a)+" "+(a.data&&a.data.model||"")+" "+(a.data&&a.data.phone||"")+" "+(a.data&&a.data.nickname||"")+" "+(a.data&&a.data.douyin_id||"")+" "+a.created_by_name).indexOf(kw)>=0);});
@@ -816,6 +862,7 @@ async function renderAssetTable(){
       h+="<button class=\"btn btn-sm btn-green\" onclick=\"showDirectTake('"+a.id+"')\">直接领用</button> ";
       h+="<button class=\"btn btn-sm btn-danger\" onclick=\"directDelAsset('"+a.id+"')\">删除</button>";
     }else if(a.status==="in_use"){
+      if(STATE.user.role!=="member")h+="<button class=\"btn btn-sm btn-green\" onclick=\"returnByAsset('"+a.id+"')\" style=\"margin-right:6px\">归还</button>";
       h+="<span style=\"color:var(--faint);font-size:12px\">使用中</span>";
     }else if(a.status==="repairing"){
       h+="<span style=\"color:var(--faint);font-size:12px\">维修中</span>";
@@ -909,6 +956,7 @@ async function renderUseTable(){
   document.getElementById("useTableBody").innerHTML=h;
 }
 async function directReturn(id){try{await apiPost("/api/uses/"+id,{});toast("已归还");renderUseTable();}catch(e){toast(e.message,"err");}}
+async function returnByAsset(id){try{await apiPost("/api/actions/return_asset",{asset_id:id});toast("已归还");renderAssetTable();}catch(e){toast(e.message,"err");}}
 
 // ===== 主管：维修管理 =====
 async function renderRepairs(){
