@@ -442,6 +442,58 @@ function delSimOption(tk,fieldId,val){
   f.options=f.options.filter(function(o){return o!==val;});
   sv();return[200,{ok:true}];
 }
+// v12.6：电话卡台账字段管理（添加/删除/移动字段）
+function postSimField(tk,b){
+  var u=verify(tk);if(!u)return[401,{error:"未登录"}];
+  if(u.role!=="supervisor"&&u.role!=="leader")return[403,{error:"无权限"}];
+  var label=(b.label||"").trim();
+  if(!label)return[400,{error:"请填写字段名称"}];
+  if((D.simfields||[]).some(function(x){return x.label===label;}))return[400,{error:"字段已存在"}];
+  var type=b.type==="input"?"input":"select";
+  var options=[];
+  if(type==="select"){
+    options=(b.options||[]).map(function(s){return String(s).trim();}).filter(Boolean);
+    if(!options.length)return[400,{error:"请填写选项"}];
+  }
+  D.simfields=(D.simfields||[]).concat([{id:uid(),label:label,type:type,options:options,placeholder:b.placeholder||"请输入",required:false}]);
+  sv();return[200,{ok:true}];
+}
+function delSimField(tk,id){
+  var u=verify(tk);if(!u)return[401,{error:"未登录"}];
+  if(u.role!=="supervisor"&&u.role!=="leader")return[403,{error:"无权限"}];
+  D.simfields=(D.simfields||[]).filter(function(x){return x.id!==id;});
+  sv();return[200,{ok:true}];
+}
+function moveSimField(tk,b){
+  var u=verify(tk);if(!u)return[401,{error:"未登录"}];
+  if(u.role!=="supervisor"&&u.role!=="leader")return[403,{error:"无权限"}];
+  var arr=D.simfields||[];
+  var i=arr.findIndex(function(x){return x.id===b.id;});
+  if(i<0)return[404,{error:"字段不存在"}];
+  var j=b.dir==="up"?i-1:i+1;
+  if(j<0||j>=arr.length)return[400,{error:"已到边界"}];
+  var t=arr[i];arr[i]=arr[j];arr[j]=t;
+  sv();return[200,{ok:true}];
+}
+// 电话卡字段选项（select 类型用）
+function postSimFieldOption(tk,b){
+  var u=verify(tk);if(!u)return[401,{error:"未登录"}];
+  if(u.role!=="supervisor"&&u.role!=="leader")return[403,{error:"无权限"}];
+  var f=(D.simfields||[]).find(function(x){return x.id===b.field_id;});
+  if(!f)return[404,{error:"字段不存在"}];
+  var v=(b.value||"").trim();
+  if(!v)return[400,{error:"选项不能为空"}];
+  if(f.options.indexOf(v)<0)f.options.push(v);
+  sv();return[200,{ok:true}];
+}
+function delSimFieldOption(tk,fieldId,val){
+  var u=verify(tk);if(!u)return[401,{error:"未登录"}];
+  if(u.role!=="supervisor"&&u.role!=="leader")return[403,{error:"无权限"}];
+  var f=(D.simfields||[]).find(function(x){return x.id===fieldId;});
+  if(!f)return[404,{error:"字段不存在"}];
+  f.options=f.options.filter(function(o){return o!==val;});
+  sv();return[200,{ok:true}];
+}
 function postAsset(tk,b){
   var u=verify(tk);if(!u)return[401,{error:"未登录"}];
   if(!b.data||!b.data.type)return[400,{error:"请选择设备类型"}];
@@ -837,6 +889,11 @@ function route(method,path,tk,body){
   if(path==="/api/sims"&&method==="POST")return postSim(tk,body);
   if(path==="/api/sims/update"&&method==="POST")return updateSim(tk,body);
   if(path==="/api/sim_option"&&method==="POST")return postSimOption(tk,body);
+  if(path==="/api/sim_fields"&&method==="POST")return postSimField(tk,body);
+  if(path==="/api/sim_fields/move"&&method==="POST")return moveSimField(tk,body);
+  if(path==="/api/sim_field_option"&&method==="POST")return postSimFieldOption(tk,body);
+  if(pp[1]==="api"&&pp[2]==="sim_fields"&&pp.length===4&&method==="DELETE")return delSimField(tk,pp[3]);
+  if(pp[1]==="api"&&pp[2]==="sim_field_option"&&pp.length===5&&method==="DELETE")return delSimFieldOption(tk,pp[3],decodeURIComponent(pp[4]));
   if(pp[1]==="api"&&pp[2]==="sims"&&pp.length===4&&method==="DELETE")return delSim(tk,pp[3]);
   if(pp[1]==="api"&&pp[2]==="sim_option"&&pp.length===5&&method==="DELETE")return delSimOption(tk,pp[3],decodeURIComponent(pp[4]));
   if(path==="/api/fields/move"&&method==="POST")return moveField(tk,body);
@@ -1091,12 +1148,19 @@ function assetFullHtml(a, fields){
 }
 async function renderAssets(){
   var data=await apiGet("/api/stats");
+  var fields=await apiGet("/api/fields");
   var st=data.stats||{};
   var h="<div class=\"page-title\">设备台账</div><div class=\"page-desc\">全部设备登记与状态（主管可直接管理）</div>";
   h+="<div class=\"kpi-row\">"+kpiCard("设备总数","#0a84ff",st.total)+kpiCard("在库","#34c759",st.available)+kpiCard("已领用","#7c5cff",st.inUse)+kpiCard("维修中","#ff9500",st.repairing)+"</div>";
   h+="<div class=\"filter-bar\"><select id=\"astFilter\" onchange=\"renderAssetTable()\"><option value=\"\">全部状态</option><option value=\"available\">在库</option><option value=\"in_use\">已领用</option><option value=\"repairing\">维修中</option><option value=\"scrapped\">已报废</option></select><input id=\"astSearch\" placeholder=\"搜索名称/编号/登记人\" oninput=\"renderAssetTable()\"><button class=\"btn btn-primary\" onclick=\"showAddAsset()\">＋ 登记设备</button></div>";
   h+="<div class=\"filter-bar\" style=\"flex-wrap:wrap;gap:6px\" id=\"personBar\">加载人员…</div>";
-  h+="<div class=\"card\"><div class=\"c-head\"><h3>设备列表</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th>设备</th><th>手机型号</th><th>手机编号</th><th>手机号</th><th>登记人</th><th>使用人</th><th>状态</th><th>登记时间</th><th>操作</th></tr></thead><tbody id=\"assetTableBody\"></tbody></table></div></div>";
+  // v12.6：动态字段列（除固定4列外，自定义字段自动成为列）
+  var extraThs="";
+  (fields.fields||[]).forEach(function(f){
+    if(["type","model","sn","phone"].indexOf(f.id)>=0)return;
+    extraThs+="<th>"+esc(f.label)+"</th>";
+  });
+  h+="<div class=\"card\"><div class=\"c-head\"><h3>设备列表</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th>设备</th><th>手机型号</th><th>手机编号</th><th>手机号</th>"+extraThs+"<th>登记人</th><th>使用人</th><th>状态</th><th>登记时间</th><th>操作</th></tr></thead><tbody id=\"assetTableBody\"></tbody></table></div></div>";
   document.getElementById("content").innerHTML=h;
   renderPersonBar();
   renderAssetTable();
@@ -1136,12 +1200,17 @@ async function renderAssetTable(){
   var h="";
   list.forEach(function(a){
     var d=a.data||{};
-    var code=a.data&&a.data.code?"<span style=\"color:var(--faint);font-size:12px\">"+esc(a.data.code)+"</span>":"";
     var myUse=useData.uses.find(function(x){return x.asset_id===a.id&&!x.return_time;});
     // 使用人：在用/已领用显示实际使用人；在库设备显示登记人（谁录的谁在用，等退回仓库后为在库）
     var showUser=myUse?myUse.user_name:(a.status==="available"?a.created_by_name:"");
+    // v12.6：动态字段列
+    var extraTds="";
+    (fieldsData.fields||[]).forEach(function(f){
+      if(["type","model","sn","phone"].indexOf(f.id)>=0)return;
+      extraTds+="<td>"+(d[f.id]?esc(d[f.id]):"<span style=\"color:var(--faint)\">—</span>")+"</td>";
+    });
     // v12.4：设备/型号/编号/手机号独立列
-    h+="<tr><td><b>"+esc(d.type||"—")+"</b></td><td>"+esc(d.model||"—")+"</td><td>"+esc(d.sn||"—")+"</td><td>"+esc(d.phone||"—")+"</td><td><button class=\"link-btn\" onclick=\"filterByUser(this)\" data-v=\""+a.created_by+"\">"+esc(a.created_by_name)+"</button></td><td>"+(showUser?"<b>"+esc(showUser)+"</b>":"<span style=\"color:var(--faint)\">—</span>")+"</td><td>"+assetTag(a.status)+"</td><td class=\"num\">"+esc(a.created)+"</td><td>";
+    h+="<tr><td><b>"+esc(d.type||"—")+"</b></td><td>"+esc(d.model||"—")+"</td><td>"+esc(d.sn||"—")+"</td><td>"+esc(d.phone||"—")+"</td>"+extraTds+"<td><button class=\"link-btn\" onclick=\"filterByUser(this)\" data-v=\""+a.created_by+"\">"+esc(a.created_by_name)+"</button></td><td>"+(showUser?"<b>"+esc(showUser)+"</b>":"<span style=\"color:var(--faint)\">—</span>")+"</td><td>"+assetTag(a.status)+"</td><td class=\"num\">"+esc(a.created)+"</td><td>";
     if(STATE.user.role!=="member")h+="<button class=\"btn btn-sm btn-ghost\" onclick=\"openEditAsset('"+a.id+"',0)\" style=\"margin-right:6px\">编辑</button>";
     if(a.status==="available"){
       h+="<button class=\"btn btn-sm btn-green\" onclick=\"showDirectTake('"+a.id+"')\">直接领用</button> ";
@@ -1159,7 +1228,8 @@ async function renderAssetTable(){
     }
     h+="</td></tr>";
   });
-  if(!h)h="<tr><td colspan=\"9\" class=\"empty\">暂无设备</td></tr>";
+  var extraCnt=fieldsData.fields?fieldsData.fields.filter(function(f){return ["type","model","sn","phone"].indexOf(f.id)<0;}).length:0;
+  if(!h)h="<tr><td colspan=\""+(9+extraCnt)+"\" class=\"empty\">暂无设备</td></tr>";
   document.getElementById("assetTableBody").innerHTML=h;
 }
 function showAddAsset(){
@@ -1360,30 +1430,71 @@ async function setRepair(id,status){
 // ===== 主管：选项管理 =====
 async function renderOptions(){
   var h="<div class=\"page-title\">选项管理</div><div class=\"page-desc\">自定义登记表单的选项和填空位置，员工登记时直接选择</div>";
-  h+="<div class=\"mb\"><button class=\"btn btn-primary\" onclick=\"showAddField()\">＋ 添加字段</button></div>";
+  h+="<div class=\"mb\"><button class=\"btn btn-primary\" onclick=\"showAddField()\">＋ 添加设备字段</button> <button class=\"btn btn-primary\" onclick=\"showAddSimField()\">＋ 添加电话卡字段</button></div>";
   h+="<div class=\"card\"><div class=\"c-head\"><h3>手机台账 · 登记字段</h3></div><div class=\"c-body\" id=\"fieldBody\"></div></div>";
-  h+="<div class=\"card\"><div class=\"c-head\"><h3>电话卡台账 · 运营商选项</h3></div><div class=\"c-body\" id=\"simOptBody\"></div></div>";
+  h+="<div class=\"card\"><div class=\"c-head\"><h3>电话卡台账 · 登记字段</h3></div><div class=\"c-body\" id=\"simOptBody\"></div></div>";
   document.getElementById("content").innerHTML=h;
   renderFieldList();
-  renderSimOptList();
+  renderSimFieldList();
 }
-async function renderSimOptList(){
+// v12.6：电话卡字段管理（仿设备字段）
+async function renderSimFieldList(){
   var data=await apiGet("/api/sims");
-  var f=(data.simfields||[]).find(function(x){return x.id==="sim_type";});
-  var opts=f&&f.options?f.options:["移动","联通","电信","其他"];
-  var h="<div style=\"display:flex;flex-wrap:wrap;gap:8px\">";
-  opts.forEach(function(o){
-    h+="<span class=\"tag tag-gray\" style=\"padding:5px 12px\">"+esc(o)+" <a href=\"javascript:void(0)\" onclick=\"delSimOpt('"+esc(o)+"')\" style=\"color:var(--red);margin-left:2px\">✕</a></span>";
+  var fields=data.simfields||[];
+  var h="";
+  fields.forEach(function(f,i){
+    h+="<div class=\"req-item\"><div class=\"r-top\"><b>"+esc(f.label)+"</b>"+(f.type==="select"?"<span class=\"tag tag-blue\">选择题</span>":"<span class=\"tag tag-purple\">填空</span>")+"<span style=\"flex:1\"></span>"
+      +"<button class=\"btn btn-sm btn-ghost\" onclick=\"moveSimFieldPos('"+f.id+"','up')\" "+(i===0?"disabled":"")+">↑</button> "
+      +"<button class=\"btn btn-sm btn-ghost\" onclick=\"moveSimFieldPos('"+f.id+"','down')\" "+(i===fields.length-1?"disabled":"")+">↓</button> "
+      +"<button class=\"btn btn-sm btn-danger\" onclick=\"delSimFieldF('"+f.id+"')\">删除字段</button></div>";
+    if(f.type==="select"){
+      h+="<div style=\"display:flex;flex-wrap:wrap;gap:8px;margin-top:10px\">";
+      (f.options||[]).forEach(function(o){
+        h+="<span class=\"tag tag-gray\" style=\"padding:5px 12px\">"+esc(o)
+          +" <a href=\"javascript:void(0)\" onclick=\"delSimFieldOpt('"+f.id+"','"+esc(o)+"')\" style=\"color:var(--red);margin-left:2px\">✕</a></span>";
+      });
+      h+="</div>";
+      h+="<div style=\"display:flex;gap:8px;margin-top:10px\"><input id=\"simopt_"+f.id+"\" placeholder=\"添加选项\" style=\"height:36px;border:1.5px solid var(--line);border-radius:8px;padding:0 12px;font-size:13px;flex:1\"><button class=\"btn btn-sm btn-primary\" onclick=\"addSimFieldOpt('"+f.id+"')\">添加</button></div>";
+    }else{
+      h+="<div class=\"r-note\" style=\"margin-top:8px\">填空位置："+esc(f.placeholder||"请输入")+"</div>";
+    }
+    h+="</div>";
   });
-  h+="</div><div style=\"display:flex;gap:8px;margin-top:10px\"><input id=\"simopt_new\" placeholder=\"添加运营商选项\" style=\"height:36px;border:1.5px solid var(--line);border-radius:8px;padding:0 12px;font-size:13px;flex:1\"><button class=\"btn btn-sm btn-primary\" onclick=\"addSimOpt()\">添加</button></div>";
+  if(!h)h="<div class=\"empty\">暂无字段，点击右上角添加</div>";
   document.getElementById("simOptBody").innerHTML=h;
 }
-async function addSimOpt(){
-  var v=document.getElementById("simopt_new").value.trim();
+async function moveSimFieldPos(id,dir){try{await apiPost("/api/sim_fields/move",{id:id,dir:dir});renderSimFieldList();}catch(e){toast(e.message,"err");}}
+async function addSimFieldOpt(fid){
+  var v=document.getElementById("simopt_"+fid).value.trim();
   if(!v){toast("请填写选项","err");return;}
-  try{await apiPost("/api/sim_option",{field_id:"sim_type",value:v});toast("已添加");renderSimOptList();}catch(e){toast(e.message,"err");}
+  try{await apiPost("/api/sim_field_option",{field_id:fid,value:v});toast("已添加");renderSimFieldList();}catch(e){toast(e.message,"err");}
 }
-async function delSimOpt(val){try{await apiDel("/api/sim_option/"+encodeURIComponent(val));renderSimOptList();}catch(e){toast(e.message,"err");}}
+async function delSimFieldOpt(fid,val){try{await apiDel("/api/sim_field_option/"+fid+"/"+encodeURIComponent(val));renderSimFieldList();}catch(e){toast(e.message,"err");}}
+async function delSimFieldF(id){if(!confirm("删除该字段？已登记电话卡的数据不受影响"))return;try{await apiDel("/api/sim_fields/"+id);toast("已删除");renderSimFieldList();}catch(e){toast(e.message,"err");}}
+function showAddSimField(){
+  showModal("<h3>添加电话卡字段</h3>"
+    +"<div class=\"field\"><label>字段名称</label><input id=\"snf_label\" placeholder=\"如：开卡日期\"></div>"
+    +"<div class=\"field\"><label>类型</label><select id=\"snf_type\"><option value=\"select\">选择题（下拉选项）</option><option value=\"input\">填空（输入框）</option></select></div>"
+    +"<div class=\"field\" id=\"snf_optsWrap\"><label>选项（逗号分隔）</label><input id=\"snf_opts\" placeholder=\"如：2023,2024,2025\"></div>"
+    +"<div class=\"field\"><label>填空提示（填空类型）</label><input id=\"snf_ph\" placeholder=\"如：请输入开卡日期\"></div>"
+    +"<div class=\"m-btns\"><button class=\"btn btn-ghost\" onclick=\"closeModal()\">取消</button><button class=\"btn btn-primary\" onclick=\"addSimField()\">确认添加</button></div><div class=\"err\" id=\"snf_err\"></div>");
+}
+async function addSimField(){
+  var label=document.getElementById("snf_label").value.trim();
+  var type=document.getElementById("snf_type").value;
+  var optsStr=document.getElementById("snf_opts").value;
+  var ph=document.getElementById("snf_ph").value.trim();
+  if(!label){document.getElementById("snf_err").textContent="请填写字段名称";return;}
+  var options=[];
+  if(type==="select"){
+    options=optsStr.split(/[,，]/).map(function(s){return s.trim();}).filter(Boolean);
+    if(!options.length){document.getElementById("snf_err").textContent="请填写选项";return;}
+  }
+  try{
+    await apiPost("/api/sim_fields",{label:label,type:type,options:options,placeholder:ph});
+    toast("字段已添加");closeModal();renderSimFieldList();
+  }catch(e){document.getElementById("snf_err").textContent=e.message;}
+}
 async function renderFieldList(){
   var data=await apiGet("/api/fields");
   var h="";
@@ -1568,7 +1679,13 @@ async function renderSims(){
   var role=STATE.user.role;
   var h="<div class=\"page-title\">电话卡台账</div><div class=\"page-desc\">登记电话卡，可绑定手机；卡号不可重复</div>";
   h+="<div class=\"filter-bar\"><input id=\"simSearch\" placeholder=\"搜索卡号/运营商/绑定手机\" oninput=\"renderSimTable()\"><button class=\"btn btn-primary\" onclick=\"showAddSim()\">＋ 登记电话卡</button></div>";
-  h+="<div class=\"card\"><div class=\"c-head\"><h3>电话卡列表</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th>卡号</th><th>运营商</th><th>套餐</th><th>状态</th><th>绑定手机</th><th>使用人</th><th>登记时间</th><th>操作</th></tr></thead><tbody id=\"simBody\"></tbody></table></div></div>";
+  // v12.6：动态字段列（simfields 自动成为列）
+  var extraThs="";
+  (data.simfields||[]).forEach(function(f){
+    if(f.id==="sim_type"&&f.label==="运营商")return; // 运营商并入卡号列展示，避免重复
+    extraThs+="<th>"+esc(f.label)+"</th>";
+  });
+  h+="<div class=\"card\"><div class=\"c-head\"><h3>电话卡列表</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th>卡号</th><th>运营商</th>"+extraThs+"<th>绑定手机</th><th>使用人</th><th>登记时间</th><th>操作</th></tr></thead><tbody id=\"simBody\"></tbody></table></div></div>";
   document.getElementById("content").innerHTML=h;
   renderSimTable();
 }
@@ -1581,48 +1698,77 @@ async function renderSimTable(){
     var d=s.data||{};
     if(kw&&((d.sim_no||"")+" "+(d.sim_type||"")+" "+(s.asset_sn||"")+" "+(s.asset_name||"")).indexOf(kw)<0)return;
     var bindInfo=s.asset_id?(s.asset_sn?("📱 "+esc(s.asset_name)+" 编号:"+esc(s.asset_sn)):("📱 "+esc(s.asset_name))):"<span style=\"color:var(--faint)\">未绑定</span>";
-    h+="<tr><td><b>"+esc(d.sim_no||"—")+"</b></td><td>"+esc(d.sim_type||"—")+"</td><td>"+esc(d.sim_plan||"—")+"</td><td>"+esc(d.sim_status||"—")+"</td><td>"+bindInfo+"</td><td>"+esc(s.created_by_name||"—")+"</td><td class=\"num\">"+esc(s.created)+"</td><td style=\"white-space:nowrap\">";
+    // v12.6：动态字段列
+    var extraTds="";
+    (data.simfields||[]).forEach(function(f){
+      if(f.id==="sim_type"&&f.label==="运营商")return;
+      extraTds+="<td>"+(d[f.id]?esc(d[f.id]):"<span style=\"color:var(--faint)\">—</span>")+"</td>";
+    });
+    h+="<tr><td><b>"+esc(d.sim_no||"—")+"</b></td><td>"+esc(d.sim_type||"—")+"</td>"+extraTds+"<td>"+bindInfo+"</td><td>"+esc(s.created_by_name||"—")+"</td><td class=\"num\">"+esc(s.created)+"</td><td style=\"white-space:nowrap\">";
     if(role!=="member")h+="<button class=\"btn btn-sm btn-ghost\" onclick=\"showEditSim('"+s.id+"')\">编辑</button> <button class=\"btn btn-sm btn-danger\" onclick=\"delSimF('"+s.id+"')\">删除</button>";
     h+="</td></tr>";
   });
-  if(!h)h="<tr><td colspan=\"8\" class=\"empty\">暂无电话卡，点击右上角登记</td></tr>";
+  var extraCnt=(data.simfields||[]).filter(function(f){return !(f.id==="sim_type"&&f.label==="运营商");}).length;
+  if(!h)h="<tr><td colspan=\""+(6+extraCnt)+"\" class=\"empty\">暂无电话卡，点击右上角登记</td></tr>";
   document.getElementById("simBody").innerHTML=h;
 }
 async function showAddSim(){
   var data=await apiGet("/api/sims");
   var assets=await apiGet("/api/assets");
-  var opts="";
-  (data.sims||[]).forEach(function(s){});
-  var simTypeOpts="";
-  (data.simfields||[]).forEach(function(f){if(f.id==="sim_type")simTypeOpts=f.options;});
-  var typeOpts="";
-  (simTypeOpts||["移动","联通","电信","其他"]).forEach(function(o){typeOpts+="<span class=\"chip\" data-v=\""+esc(o)+"\" onclick=\"pickChip(this)\">"+esc(o)+"</span>";});
+  var simfields=data.simfields||[];
+  window.__simFields=simfields;
   var assetOpts="<option value=\"\">不绑定</option>";
   assets.assets.forEach(function(a){assetOpts+="<option value=\""+a.id+"\">"+esc(assetName(a))+"</option>";});
   showModal("<h3>登记电话卡</h3>"
     +"<div class=\"field\"><label>卡号<span class=\"req\"> *</span></label><input id=\"s_no\" placeholder=\"如：13800001234\"></div>"
-    +"<div class=\"field\"><label>运营商<span class=\"req\"> *</span></label><div class=\"chip-row\" id=\"s_type\">"+typeOpts+"</div></div>"
-    +"<div class=\"field\"><label>套餐</label><input id=\"s_plan\" placeholder=\"如：39元/月\"></div>"
-    +"<div class=\"field\"><label>状态</label><div class=\"chip-row\" id=\"s_status\"><span class=\"chip\" data-v=\"在库\" onclick=\"pickChip(this)\">在库</span><span class=\"chip on\" data-v=\"在用\" onclick=\"pickChip(this)\">在用</span><span class=\"chip\" data-v=\"停用\" onclick=\"pickChip(this)\">停用</span><span class=\"chip\" data-v=\"遗失\" onclick=\"pickChip(this)\">遗失</span></div></div>"
+    +simFieldHtml(simfields,null)
     +"<div class=\"field\"><label>绑定手机</label><select id=\"s_asset\">"+assetOpts+"</select></div>"
-    +"<div class=\"field\"><label>备注</label><input id=\"s_note\" placeholder=\"其他说明\"></div>"
     +"<div class=\"m-btns\"><button class=\"btn btn-ghost\" onclick=\"closeModal()\">取消</button><button class=\"btn btn-primary\" onclick=\"saveAddSim()\">确认登记</button></div><div class=\"err\" id=\"s_err\"></div>");
 }
 async function saveAddSim(){
   var no=document.getElementById("s_no").value.trim();
   if(!no){document.getElementById("s_err").textContent="请填写卡号";return;}
-  var fd={
-    sim_no:no,
-    sim_type:getFieldValue("s_type"),
-    sim_plan:document.getElementById("s_plan").value.trim(),
-    sim_status:getFieldValue("s_status"),
-    sim_note:document.getElementById("s_note").value.trim()
-  };
+  var fd=collectSimForm(window.__simFields||[]);
+  fd.sim_no=no;
   var assetId=document.getElementById("s_asset").value;
   try{
     await apiPost("/api/sims",{data:fd,asset_id:assetId});
     toast("登记成功");closeModal();renderSimTable();
   }catch(e){document.getElementById("s_err").textContent=e.message;}
+}
+// v12.6：电话卡动态表单辅助（simfields 驱动）
+function simFieldHtml(fields,values){
+  var h="";
+  (fields||[]).forEach(function(f){
+    var v=values&&values[f.id]!==undefined?values[f.id]:"";
+    h+="<div class=\"field\"><label>"+esc(f.label)+"</label>";
+    if(f.type==="select"){
+      h+="<div class=\"chip-row\" id=\"sf_"+f.id+"\">";
+      (f.options||[]).forEach(function(o){
+        var on=(v===o)||(!v&&f.id==="sim_status"&&o==="在用")?" on":"";
+        h+="<span class=\"chip"+on+"\" data-v=\""+esc(o)+"\" onclick=\"pickChip(this)\">"+esc(o)+"</span>";
+      });
+      h+="</div>";
+    }else{
+      h+="<input id=\"sf_"+f.id+"\" placeholder=\""+esc(f.placeholder||"请输入")+"\" value=\""+esc(v)+"\">";
+    }
+    h+="</div>";
+  });
+  return h;
+}
+function collectSimForm(fields){
+  var fd={};
+  (fields||[]).forEach(function(f){
+    var el=document.getElementById("sf_"+f.id);
+    if(!el)return;
+    if(el.classList&&el.classList.contains("chip-row")){
+      var c=el.querySelector(".chip.on");
+      fd[f.id]=c?c.getAttribute("data-v"):"";
+    }else{
+      fd[f.id]=el.value.trim();
+    }
+  });
+  return fd;
 }
 async function showEditSim(id){
   var data=await apiGet("/api/sims");
@@ -1630,31 +1776,21 @@ async function showEditSim(id){
   var s=(data.sims||[]).find(function(x){return x.id===id;});
   if(!s){toast("卡不存在","err");return;}
   var d=s.data||{};
-  var typeOpts="";
-  (data.simfields||[]).forEach(function(f){if(f.id==="sim_type")typeOpts=f.options;});
-  var typeHtml="";
-  (typeOpts||["移动","联通","电信","其他"]).forEach(function(o){typeHtml+="<span class=\"chip"+(d.sim_type===o?" on":"")+"\" data-v=\""+esc(o)+"\" onclick=\"pickChip(this)\">"+esc(o)+"</span>";});
+  var simfields=data.simfields||[];
+  window.__simFields=simfields;
   var assetOpts="<option value=\"\">不绑定</option>";
   assets.assets.forEach(function(a){assetOpts+="<option value=\""+a.id+"\""+(s.asset_id===a.id?" selected":"")+">"+esc(assetName(a))+"</option>";});
   showModal("<h3>编辑电话卡</h3>"
     +"<div class=\"field\"><label>卡号<span class=\"req\"> *</span></label><input id=\"s_no\" value=\""+esc(d.sim_no||"")+"\"></div>"
-    +"<div class=\"field\"><label>运营商</label><div class=\"chip-row\" id=\"s_type\">"+typeHtml+"</div></div>"
-    +"<div class=\"field\"><label>套餐</label><input id=\"s_plan\" value=\""+esc(d.sim_plan||"")+"\"></div>"
-    +"<div class=\"field\"><label>状态</label><select id=\"s_status\"><option value=\"在库\""+(d.sim_status==="在库"?" selected":"")+">在库</option><option value=\"在用\""+(d.sim_status==="在用"?" selected":"")+">在用</option><option value=\"停用\""+(d.sim_status==="停用"?" selected":"")+">停用</option><option value=\"遗失\""+(d.sim_status==="遗失"?" selected":"")+">遗失</option></select></div>"
+    +simFieldHtml(simfields,d)
     +"<div class=\"field\"><label>绑定手机</label><select id=\"s_asset\">"+assetOpts+"</select></div>"
-    +"<div class=\"field\"><label>备注</label><input id=\"s_note\" value=\""+esc(d.sim_note||"")+"\"></div>"
     +"<div class=\"m-btns\"><button class=\"btn btn-ghost\" onclick=\"closeModal()\">取消</button><button class=\"btn btn-primary\" onclick=\"saveEditSim('"+id+"')\">保存修改</button></div><div class=\"err\" id=\"s_err\"></div>");
 }
 async function saveEditSim(id){
   var no=document.getElementById("s_no").value.trim();
   if(!no){document.getElementById("s_err").textContent="请填写卡号";return;}
-  var fd={
-    sim_no:no,
-    sim_type:getFieldValue("s_type"),
-    sim_plan:document.getElementById("s_plan").value.trim(),
-    sim_status:document.getElementById("s_status").value,
-    sim_note:document.getElementById("s_note").value.trim()
-  };
+  var fd=collectSimForm(window.__simFields||[]);
+  fd.sim_no=no;
   var assetId=document.getElementById("s_asset").value;
   try{
     await apiPost("/api/sims/update",{id:id,data:fd,asset_id:assetId});
