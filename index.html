@@ -237,14 +237,19 @@ async function pullCloud(force){
       if(!D.users)D.users=[];
       if(!D.fields)D.fields=[];
       mergeFields(D);
+      ensureSimData();
       svLocal();
     }else{
       pushCloud();
     }
   }catch(e){console.log("云端加载失败",e.message);}
 }
-function ensureCloud(){if(!cloudPromise)cloudPromise=pullCloud().then(function(){cloudReady=true;});return cloudPromise;}
-function sv(){svLocal();D_DIRTY=true;pushCloud().then(function(){D_DIRTY=false;}).catch(function(){D_DIRTY=false;});}
+function ensureSimData(){
+  if(!D.simfields||!D.simfields.length)D.simfields=[{id:"sim_type",label:"运营商",type:"select",options:["移动","联通","电信","其他"],required:true}];
+  if(!D.simcards)D.simcards=[];
+}
+function ensureCloud(){if(!cloudPromise)cloudPromise=pullCloud().then(function(){cloudReady=true;ensureSimData();});return cloudPromise;}
+function sv(){svLocal();D_DIRTY=true;pushCloud().then(function(){setTimeout(function(){D_DIRTY=false;},3000);}).catch(function(){D_DIRTY=false;});}
 function initDB(){
   return {
     users:[
@@ -260,7 +265,14 @@ function initDB(){
       {id:"douyin_id",label:"抖音ID",type:"input",placeholder:"如：dy123456",required:false},
       {id:"note",label:"备注",type:"input",placeholder:"其他说明",required:false}
     ],
-    assets:[],uses:[],repairs:[],requests:[]
+    assets:[],uses:[],repairs:[],requests:[],
+    simfields:[
+      {id:"sim_type",label:"运营商",type:"select",options:["移动","联通","电信","其他"],required:true},
+      {id:"sim_plan",label:"套餐",type:"input",placeholder:"如：39元/月",required:false},
+      {id:"sim_status",label:"状态",type:"select",options:["在库","在用","停用","遗失"],required:false},
+      {id:"sim_note",label:"备注",type:"input",placeholder:"其他说明",required:false}
+    ],
+    simcards:[]
   };
 }
 var D=loadLocal()||initDB();
@@ -378,13 +390,65 @@ function getAssets(tk){
   });
   return[200,{assets:list.map(function(a){return Object.assign({},a);})}];
 }
+function getSims(tk){
+  var u=verify(tk);if(!u)return[401,{error:"未登录"}];
+  var list=D.simcards||[];
+  list=list.map(function(s){
+    var a=s.asset_id?D.assets.find(function(x){return x.id===s.asset_id;}):null;
+    return Object.assign({},s,{asset_sn:(a&&a.data&&a.data.sn)||"",asset_model:(a&&a.data&&a.data.model)||"",asset_name:a?assetName(a):""});
+  });
+  return[200,{sims:list,simfields:D.simfields||[]}];
+}
+function postSim(tk,b){
+  var u=verify(tk);if(!u)return[401,{error:"未登录"}];
+  if(u.role==="member"&&u.role!=="member")return[403,{error:"无权限"}];
+  if(!b.data||!b.data.sim_no)return[400,{error:"请填写卡号"}];
+  var d={};for(var k in b.data)d[k]=b.data[k];
+  if((D.simcards||[]).find(function(s){return s.data&&s.data.sim_no===d.sim_no;}))return[400,{error:"卡号已存在，不能重复"}];
+  (D.simcards=D.simcards||[]).push({id:uid(),data:d,created:nowStr(),created_by:u.id,created_by_name:u.name,asset_id:b.asset_id||""});
+  sv();return[200,{ok:true}];
+}
+function updateSim(tk,b){
+  var u=verify(tk);if(!u)return[401,{error:"未登录"}];
+  if(u.role==="member")return[403,{error:"无权限"}];
+  var s=(D.simcards||[]).find(function(x){return x.id===b.id;});
+  if(!s)return[404,{error:"卡不存在"}];
+  if(b.data){for(var k in b.data)s.data[k]=b.data[k];}
+  if(b.asset_id!==undefined)s.asset_id=b.asset_id;
+  if(b.asset_id){var a=D.assets.find(function(x){return x.id===b.asset_id;});if(!a)return[400,{error:"手机不存在"}];}
+  sv();return[200,{ok:true}];
+}
+function delSim(tk,id){
+  var u=verify(tk);if(!u)return[401,{error:"未登录"}];
+  if(u.role==="member")return[403,{error:"无权限"}];
+  D.simcards=(D.simcards||[]).filter(function(x){return x.id!==id;});
+  sv();return[200,{ok:true}];
+}
+function postSimOption(tk,b){
+  var u=verify(tk);if(!u)return[401,{error:"未登录"}];
+  if(u.role!=="supervisor"&&u.role!=="leader")return[403,{error:"无权限"}];
+  var f=(D.simfields||[]).find(function(x){return x.id===b.field_id;});
+  if(!f)return[404,{error:"字段不存在"}];
+  var v=(b.value||"").trim();
+  if(!v)return[400,{error:"选项不能为空"}];
+  if(f.options.indexOf(v)<0)f.options.push(v);
+  sv();return[200,{ok:true}];
+}
+function delSimOption(tk,fieldId,val){
+  var u=verify(tk);if(!u)return[401,{error:"未登录"}];
+  if(u.role!=="supervisor"&&u.role!=="leader")return[403,{error:"无权限"}];
+  var f=(D.simfields||[]).find(function(x){return x.id===fieldId;});
+  if(!f)return[404,{error:"字段不存在"}];
+  f.options=f.options.filter(function(o){return o!==val;});
+  sv();return[200,{ok:true}];
+}
 function postAsset(tk,b){
   var u=verify(tk);if(!u)return[401,{error:"未登录"}];
   if(!b.data||!b.data.type)return[400,{error:"请选择设备类型"}];
   var data={};for(var k in b.data)data[k]=b.data[k];
   var snId=findFieldId("手机编号");
   if(snId&&data[snId]&&D.assets.find(function(x){return x.data&&x.data[snId]===data[snId]&&x.status!=="deleted";}))return[400,{error:"手机编号已存在，不能重复"}];
-  D.assets.push({id:uid(),data:data,status:(u.role==="member"?"available":"in_use"),created:nowStr(),created_by:u.id,created_by_name:u.name});
+  D.assets.push({id:uid(),data:data,status:"in_use",created:nowStr(),created_by:u.id,created_by_name:u.name});
   sv();return[200,{ok:true}];
 }
 function findFieldId(label){var f=D.fields.find(function(x){return x.label===label;});return f?f.id:null;}
@@ -405,7 +469,7 @@ function getRequests(tk){
 function postRequest(tk,b){
   var u=verify(tk);if(!u)return[401,{error:"未登录"}];
   var type=b.type;
-  if(["take","repair","return","delete"].indexOf(type)<0)return[400,{error:"类型不合法"}];
+  if(["take","repair","return","delete","edit"].indexOf(type)<0)return[400,{error:"类型不合法"}];
   var a=D.assets.find(function(x){return x.id===b.asset_id;});
   if(!a||a.status==="deleted")return[404,{error:"设备不存在"}];
   // 校验
@@ -418,9 +482,10 @@ function postRequest(tk,b){
   }
   if(type==="repair"&&!b.desc)return[400,{error:"请描述故障"}];
   if(type==="delete"&&!b.reason)return[400,{error:"请填写删除原因"}];
+  if(type==="edit"){if(!b.field||b.new_value===undefined)return[400,{error:"参数不完整"}];}
   // 重复待审检查
   if(D.requests.find(function(x){return x.type===type&&x.asset_id===a.id&&x.user_id===u.id&&x.status==="pending";}))return[400,{error:"已有待审核的同类型申请"}];
-  D.requests.push({id:uid(),type:type,asset_id:a.id,asset_name:assetName(a),user_id:u.id,user_name:u.name,desc:b.desc||"",reason:b.reason||"",note:"",status:"pending",created:nowStr(),handled_by:"",handled_at:""});
+  D.requests.push({id:uid(),type:type,asset_id:a.id,asset_name:assetName(a),user_id:u.id,user_name:u.name,desc:b.desc||"",reason:b.reason||"",note:"",status:"pending",created:nowStr(),handled_by:"",handled_at:"",field:b.field||"",new_value:b.new_value||""});
   sv();return[200,{ok:true}];
 }
 function approveRequest(tk,id,b){
@@ -447,6 +512,10 @@ function approveRequest(tk,id,b){
   }else if(r.type==="delete"){
     if(!a)return[404,{error:"设备不存在"}];
     a.status="deleted";
+  }else if(r.type==="edit"){
+    if(!a)return[404,{error:"设备不存在"}];
+    if(!a.data)a.data={};
+    a.data[r.field]=r.new_value;
   }
   r.status="approved";r.handled_by=u.name;r.handled_at=nowStr();r.note=b&&b.note?b.note:"";
   sv();return[200,{ok:true}];
@@ -728,6 +797,12 @@ function route(method,path,tk,body){
   if(path==="/api/actions/edit_my_asset"&&method==="POST")return editMyAsset(tk,body);
   if(path==="/api/users/update"&&method==="POST")return updateUser(tk,body);
   if(path==="/api/actions/to_warehouse"&&method==="POST")return toWarehouse(tk,body);
+  if(path==="/api/sims"&&method==="GET")return getSims(tk);
+  if(path==="/api/sims"&&method==="POST")return postSim(tk,body);
+  if(path==="/api/sims/update"&&method==="POST")return updateSim(tk,body);
+  if(path==="/api/sim_option"&&method==="POST")return postSimOption(tk,body);
+  if(pp[1]==="api"&&pp[2]==="sims"&&pp.length===4&&method==="DELETE")return delSim(tk,pp[3]);
+  if(pp[1]==="api"&&pp[2]==="sim_option"&&pp.length===5&&method==="DELETE")return delSimOption(tk,pp[3],decodeURIComponent(pp[4]));
   if(path==="/api/fields/move"&&method==="POST")return moveField(tk,body);
   if(path==="/api/fields/option_move"&&method==="POST")return moveOption(tk,body);
   if(path==="/api/warehouse"&&method==="GET")return getWarehouse(tk);
@@ -759,8 +834,8 @@ window.fetch=function(url,opts){
 
 // ============ 前端 ============
 var ROLE_LABELS={supervisor:"主管",leader:"组长",member:"员工"};
-var STATE={user:null},CURRENT_PAGE="",ASSET_FILTER="";
-var REQ_TYPES={take:["领用","tag-blue"],repair:["报修","tag-orange"],return:["退还","tag-purple"],delete:["删除","tag-red"]};
+var STATE={user:null},CURRENT_PAGE="",ASSET_FILTER="",MYDEV_TYPE="",WH_MODEL="";
+var REQ_TYPES={take:["领用","tag-blue"],repair:["报修","tag-orange"],return:["退还","tag-purple"],delete:["删除","tag-red"],edit:["修改","tag-purple"]};
 var REQ_STATUS={pending:["待审核","tag-orange"],approved:["已同意","tag-green"],rejected:["已拒绝","tag-red"],cancelled:["已撤销","tag-gray"]};
 
 async function apiJSON(path,opts){
@@ -834,6 +909,7 @@ function renderSidebar(){
     items=[
       {id:"review",icon:"📋",label:"待审申请"},
       {id:"assets",icon:"📦",label:"设备台账"},
+      {id:"sims",icon:"📇",label:"电话卡台账"},
       {id:"uses",icon:"🔁",label:"领用记录"},
       {id:"repairs",icon:"🔧",label:"维修管理"},
       {id:"stats",icon:"📊",label:"数据统计"},
@@ -844,6 +920,7 @@ function renderSidebar(){
     items=[
       {id:"review",icon:"📋",label:"待审申请"},
       {id:"assets",icon:"📦",label:"设备台账"},
+      {id:"sims",icon:"📇",label:"电话卡台账"},
       {id:"warehouse",icon:"🏬",label:"仓库手机"},
       {id:"uses",icon:"🔁",label:"领用记录"},
       {id:"repairs",icon:"🔧",label:"维修管理"},
@@ -878,7 +955,7 @@ async function refreshBadges(){
   }catch(e){}
 }
 
-function navTo(page){CURRENT_PAGE=page;renderSidebar();if(page==="review")renderReview();else if(page==="assets")renderAssets();else if(page==="uses")renderUses();else if(page==="repairs")renderRepairs();else if(page==="stats")renderStats();else if(page==="options")renderOptions();else if(page==="warehouse")renderWarehouse();else if(page==="members")renderMembers();else if(page==="mydev")renderMyDev();else if(page==="mymain")renderMyMain();}
+function navTo(page){CURRENT_PAGE=page;renderSidebar();if(page==="review")renderReview();else if(page==="assets")renderAssets();else if(page==="uses")renderUses();else if(page==="repairs")renderRepairs();else if(page==="stats")renderStats();else if(page==="options")renderOptions();else if(page==="warehouse")renderWarehouse();else if(page==="sims")renderSims();else if(page==="members")renderMembers();else if(page==="mydev")renderMyDev();else if(page==="mymain")renderMyMain();}
 
 // ===== 标签 =====
 function assetTag(s){
@@ -914,7 +991,7 @@ async function renderReviewList(){
   }
   if(!pending.length)h+="<div class=\"empty\">暂无待审核申请</div>";
   pending.forEach(function(r){
-    var detail=r.type==="repair"?("故障："+esc(r.desc)):(r.type==="delete"?("原因："+esc(r.reason)):"");
+    var detail=r.type==="repair"?("故障："+esc(r.desc)):(r.type==="delete"?("原因："+esc(r.reason)):(r.type==="edit"?("修改："+esc(r.field==="model"?"手机型号":"手机编号")+" → "+esc(r.new_value)):""));
     h+="<div class=\"req-item\" style=\"display:flex;gap:10px;align-items:flex-start\"><input type=\"checkbox\" class=\"req-chk\" value=\""+r.id+"\" style=\"margin-top:5px;flex-shrink:0\" onchange=\"updateSelCount()\"><div style=\"flex:1\"><div class=\"r-top\">"+reqTypeTag(r.type)+"<b>"+esc(r.asset_name)+"</b><span style=\"color:var(--faint);font-size:12px\">"+esc(r.user_name)+" · "+esc(r.created)+"</span></div>"
       +(detail?"<div class=\"r-desc\">"+detail+"</div>":"")
       +"<div class=\"r-actions\"><button class=\"btn btn-sm btn-green\" onclick=\"handleReq('"+r.id+"','approve')\">✔ 同意</button><button class=\"btn btn-sm btn-danger\" onclick=\"handleReq('"+r.id+"','reject')\">✘ 不同意</button></div></div></div>";
@@ -970,7 +1047,7 @@ async function renderAssets(){
   h+="<div class=\"kpi-row\">"+kpiCard("设备总数","#0a84ff",st.total)+kpiCard("在库","#34c759",st.available)+kpiCard("已领用","#7c5cff",st.inUse)+kpiCard("维修中","#ff9500",st.repairing)+"</div>";
   h+="<div class=\"filter-bar\"><select id=\"astFilter\" onchange=\"renderAssetTable()\"><option value=\"\">全部状态</option><option value=\"available\">在库</option><option value=\"in_use\">已领用</option><option value=\"repairing\">维修中</option><option value=\"scrapped\">已报废</option></select><input id=\"astSearch\" placeholder=\"搜索名称/编号/登记人\" oninput=\"renderAssetTable()\"><button class=\"btn btn-primary\" onclick=\"showAddAsset()\">＋ 登记设备</button></div>";
   h+="<div class=\"filter-bar\" style=\"flex-wrap:wrap;gap:6px\" id=\"personBar\">加载人员…</div>";
-  h+="<div class=\"card\"><div class=\"c-head\"><h3>设备列表</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th>设备</th><th>登记人</th><th>状态</th><th>登记时间</th><th>操作</th></tr></thead><tbody id=\"assetTableBody\"></tbody></table></div></div>";
+  h+="<div class=\"card\"><div class=\"c-head\"><h3>设备列表</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th>设备</th><th>登记人</th><th>使用人</th><th>状态</th><th>登记时间</th><th>操作</th></tr></thead><tbody id=\"assetTableBody\"></tbody></table></div></div>";
   document.getElementById("content").innerHTML=h;
   renderPersonBar();
   renderAssetTable();
@@ -1009,7 +1086,8 @@ async function renderAssetTable(){
   var h="";
   list.forEach(function(a){
     var code=a.data&&a.data.code?"<span style=\"color:var(--faint);font-size:12px\">"+esc(a.data.code)+"</span>":"";
-    h+="<tr><td><b>"+esc(assetName(a))+"</b> "+code+"</td><td><button class=\"link-btn\" onclick=\"filterByUser(this)\" data-v=\""+a.created_by+"\">"+esc(a.created_by_name)+"</button></td><td>"+assetTag(a.status)+"</td><td class=\"num\">"+esc(a.created)+"</td><td>";
+    var myUse=useData.uses.find(function(x){return x.asset_id===a.id&&!x.return_time;});
+    h+="<tr><td><b>"+esc(assetName(a))+"</b> "+code+"</td><td><button class=\"link-btn\" onclick=\"filterByUser(this)\" data-v=\""+a.created_by+"\">"+esc(a.created_by_name)+"</button></td><td>"+(myUse?"<b>"+esc(myUse.user_name)+"</b>":"<span style=\"color:var(--faint)\">—</span>")+"</td><td>"+assetTag(a.status)+"</td><td class=\"num\">"+esc(a.created)+"</td><td>";
     if(STATE.user.role!=="member")h+="<button class=\"btn btn-sm btn-ghost\" onclick=\"openEditAsset('"+a.id+"',0)\" style=\"margin-right:6px\">编辑</button>";
     if(a.status==="available"){
       h+="<button class=\"btn btn-sm btn-green\" onclick=\"showDirectTake('"+a.id+"')\">直接领用</button> ";
@@ -1100,15 +1178,15 @@ async function openEditAsset(id,isMember){
     var a=assets.assets.find(function(x){return x.id===id;});
     if(!a){toast("设备不存在","err");return;}
     EDIT_ORIG=a.data||{};
-    var lockLabels=["手机号码","手机型号","手机编号"];
+    var lockLabels=["手机型号","手机编号"];
     EDIT_LOCKIDS=[];
     data.fields.forEach(function(f){if(lockLabels.indexOf(f.label)>=0)EDIT_LOCKIDS.push(f.id);});
     var locked=(isMember===1||isMember==="1");
-    var h="<h3>编辑设备"+(locked?"（手机号码/型号/编号不可修改）":"")+"</h3><div id=\"assetForm\">";
+    var h="<h3>编辑设备"+(locked?"（型号/编号修改需审核）":"")+"</h3><div id=\"assetForm\">";
     data.fields.forEach(function(f){
       var cur=(a.data&&a.data[f.id])?a.data[f.id]:"";
       var lock=locked&&EDIT_LOCKIDS.indexOf(f.id)>=0;
-      h+="<div class=\"field\"><label>"+esc(f.label)+(f.required?"<span class=\"req\"> *</span>":"")+(lock?"<span style=\"color:var(--faint);font-size:11px\">（不可修改）</span>":"")+"</label>";
+      h+="<div class=\"field\"><label>"+esc(f.label)+(f.required?"<span class=\"req\"> *</span>":"")+(lock?"<span style=\"color:var(--orange);font-size:11px\">（修改需审核）</span>":"")+"</label>";
       if(f.type==="select"){
         h+="<div class=\"chip-row\" id=\"f_"+f.id+"\">";
         f.options.forEach(function(o){h+="<span class=\"chip"+(cur===o?" on":"")+"\" data-v=\""+esc(o)+"\" onclick=\"pickChip(this)\" style=\"opacity:"+(lock?"0.5":"1")+"\">"+esc(o)+"</span>";});
@@ -1134,9 +1212,29 @@ async function saveEditAsset(id,isMember){
     fd[f.id]=v;
   }
   try{
-    await apiPost(locked?"/api/actions/edit_my_asset":"/api/actions/edit_asset",{asset_id:id,data:fd});
-    toast("已保存");closeModal();
-    if(STATE.user.role==="member"){renderMyDevList();}else{renderAssetTable();}
+    if(locked){
+      var editReqs=[];
+      var direct={};
+      for(var j=0;j<data.fields.length;j++){
+        var fj=data.fields[j];
+        var vj=getFieldValue(fj.id);
+        if(EDIT_LOCKIDS.indexOf(fj.id)>=0){
+          if(vj!==(EDIT_ORIG[fj.id]||""))editReqs.push({field:fj.id,label:fj.label,new_value:vj});
+        }else{
+          direct[fj.id]=vj;
+        }
+      }
+      if(Object.keys(direct).length)await apiPost("/api/actions/edit_my_asset",{asset_id:id,data:direct});
+      for(var k=0;k<editReqs.length;k++){
+        await apiPost("/api/requests",{type:"edit",asset_id:id,field:editReqs[k].field,new_value:editReqs[k].new_value});
+      }
+      toast(editReqs.length?"已保存，型号/编号修改已提交审核":"已保存");closeModal();
+      renderMyDevList();
+    }else{
+      await apiPost("/api/actions/edit_asset",{asset_id:id,data:fd});
+      toast("已保存");closeModal();
+      renderAssetTable();
+    }
   }catch(e){document.getElementById("a_err").textContent=e.message;}
 }
 // 主管直接领用/删除
@@ -1209,10 +1307,29 @@ async function setRepair(id,status){
 async function renderOptions(){
   var h="<div class=\"page-title\">选项管理</div><div class=\"page-desc\">自定义登记表单的选项和填空位置，员工登记时直接选择</div>";
   h+="<div class=\"mb\"><button class=\"btn btn-primary\" onclick=\"showAddField()\">＋ 添加字段</button></div>";
-  h+="<div class=\"card\"><div class=\"c-head\"><h3>登记字段</h3></div><div class=\"c-body\" id=\"fieldBody\"></div></div>";
+  h+="<div class=\"card\"><div class=\"c-head\"><h3>手机台账 · 登记字段</h3></div><div class=\"c-body\" id=\"fieldBody\"></div></div>";
+  h+="<div class=\"card\"><div class=\"c-head\"><h3>电话卡台账 · 运营商选项</h3></div><div class=\"c-body\" id=\"simOptBody\"></div></div>";
   document.getElementById("content").innerHTML=h;
   renderFieldList();
+  renderSimOptList();
 }
+async function renderSimOptList(){
+  var data=await apiGet("/api/sims");
+  var f=(data.simfields||[]).find(function(x){return x.id==="sim_type";});
+  var opts=f&&f.options?f.options:["移动","联通","电信","其他"];
+  var h="<div style=\"display:flex;flex-wrap:wrap;gap:8px\">";
+  opts.forEach(function(o){
+    h+="<span class=\"tag tag-gray\" style=\"padding:5px 12px\">"+esc(o)+" <a href=\"javascript:void(0)\" onclick=\"delSimOpt('"+esc(o)+"')\" style=\"color:var(--red);margin-left:2px\">✕</a></span>";
+  });
+  h+="</div><div style=\"display:flex;gap:8px;margin-top:10px\"><input id=\"simopt_new\" placeholder=\"添加运营商选项\" style=\"height:36px;border:1.5px solid var(--line);border-radius:8px;padding:0 12px;font-size:13px;flex:1\"><button class=\"btn btn-sm btn-primary\" onclick=\"addSimOpt()\">添加</button></div>";
+  document.getElementById("simOptBody").innerHTML=h;
+}
+async function addSimOpt(){
+  var v=document.getElementById("simopt_new").value.trim();
+  if(!v){toast("请填写选项","err");return;}
+  try{await apiPost("/api/sim_option",{field_id:"sim_type",value:v});toast("已添加");renderSimOptList();}catch(e){toast(e.message,"err");}
+}
+async function delSimOpt(val){try{await apiDel("/api/sim_option/"+encodeURIComponent(val));renderSimOptList();}catch(e){toast(e.message,"err");}}
 async function renderFieldList(){
   var data=await apiGet("/api/fields");
   var h="";
@@ -1391,6 +1508,108 @@ async function addMember(){
 }
 
 // ===== 前端：仓库手机页 =====
+// ===== 电话卡台账 =====
+async function renderSims(){
+  var data=await apiGet("/api/sims");
+  var role=STATE.user.role;
+  var h="<div class=\"page-title\">电话卡台账</div><div class=\"page-desc\">登记电话卡，可绑定手机；卡号不可重复</div>";
+  h+="<div class=\"filter-bar\"><input id=\"simSearch\" placeholder=\"搜索卡号/运营商/绑定手机\" oninput=\"renderSimTable()\"><button class=\"btn btn-primary\" onclick=\"showAddSim()\">＋ 登记电话卡</button></div>";
+  h+="<div class=\"card\"><div class=\"c-head\"><h3>电话卡列表</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th>卡号</th><th>运营商</th><th>套餐</th><th>状态</th><th>绑定手机</th><th>使用人</th><th>登记时间</th><th>操作</th></tr></thead><tbody id=\"simBody\"></tbody></table></div></div>";
+  document.getElementById("content").innerHTML=h;
+  renderSimTable();
+}
+async function renderSimTable(){
+  var data=await apiGet("/api/sims");
+  var kw=document.getElementById("simSearch")?(document.getElementById("simSearch").value||"").trim():"";
+  var role=STATE.user.role;
+  var h="";
+  (data.sims||[]).forEach(function(s){
+    var d=s.data||{};
+    if(kw&&((d.sim_no||"")+" "+(d.sim_type||"")+" "+(s.asset_sn||"")+" "+(s.asset_name||"")).indexOf(kw)<0)return;
+    var bindInfo=s.asset_id?(s.asset_sn?("📱 "+esc(s.asset_name)+" 编号:"+esc(s.asset_sn)):("📱 "+esc(s.asset_name))):"<span style=\"color:var(--faint)\">未绑定</span>";
+    h+="<tr><td><b>"+esc(d.sim_no||"—")+"</b></td><td>"+esc(d.sim_type||"—")+"</td><td>"+esc(d.sim_plan||"—")+"</td><td>"+esc(d.sim_status||"—")+"</td><td>"+bindInfo+"</td><td>"+esc(s.created_by_name||"—")+"</td><td class=\"num\">"+esc(s.created)+"</td><td style=\"white-space:nowrap\">";
+    if(role!=="member")h+="<button class=\"btn btn-sm btn-ghost\" onclick=\"showEditSim('"+s.id+"')\">编辑</button> <button class=\"btn btn-sm btn-danger\" onclick=\"delSimF('"+s.id+"')\">删除</button>";
+    h+="</td></tr>";
+  });
+  if(!h)h="<tr><td colspan=\"8\" class=\"empty\">暂无电话卡，点击右上角登记</td></tr>";
+  document.getElementById("simBody").innerHTML=h;
+}
+async function showAddSim(){
+  var data=await apiGet("/api/sims");
+  var assets=await apiGet("/api/assets");
+  var opts="";
+  (data.sims||[]).forEach(function(s){});
+  var simTypeOpts="";
+  (data.simfields||[]).forEach(function(f){if(f.id==="sim_type")simTypeOpts=f.options;});
+  var typeOpts="";
+  (simTypeOpts||["移动","联通","电信","其他"]).forEach(function(o){typeOpts+="<span class=\"chip\" data-v=\""+esc(o)+"\" onclick=\"pickChip(this)\">"+esc(o)+"</span>";});
+  var assetOpts="<option value=\"\">不绑定</option>";
+  assets.assets.forEach(function(a){assetOpts+="<option value=\""+a.id+"\">"+esc(assetName(a))+"</option>";});
+  showModal("<h3>登记电话卡</h3>"
+    +"<div class=\"field\"><label>卡号<span class=\"req\"> *</span></label><input id=\"s_no\" placeholder=\"如：13800001234\"></div>"
+    +"<div class=\"field\"><label>运营商<span class=\"req\"> *</span></label><div class=\"chip-row\" id=\"s_type\">"+typeOpts+"</div></div>"
+    +"<div class=\"field\"><label>套餐</label><input id=\"s_plan\" placeholder=\"如：39元/月\"></div>"
+    +"<div class=\"field\"><label>状态</label><div class=\"chip-row\" id=\"s_status\"><span class=\"chip on\" data-v=\"在库\" onclick=\"pickChip(this)\">在库</span><span class=\"chip\" data-v=\"在用\" onclick=\"pickChip(this)\">在用</span><span class=\"chip\" data-v=\"停用\" onclick=\"pickChip(this)\">停用</span><span class=\"chip\" data-v=\"遗失\" onclick=\"pickChip(this)\">遗失</span></div></div>"
+    +"<div class=\"field\"><label>绑定手机</label><select id=\"s_asset\">"+assetOpts+"</select></div>"
+    +"<div class=\"field\"><label>备注</label><input id=\"s_note\" placeholder=\"其他说明\"></div>"
+    +"<div class=\"m-btns\"><button class=\"btn btn-ghost\" onclick=\"closeModal()\">取消</button><button class=\"btn btn-primary\" onclick=\"saveAddSim()\">确认登记</button></div><div class=\"err\" id=\"s_err\"></div>");
+}
+async function saveAddSim(){
+  var no=document.getElementById("s_no").value.trim();
+  if(!no){document.getElementById("s_err").textContent="请填写卡号";return;}
+  var fd={
+    sim_no:no,
+    sim_type:getFieldValue("s_type"),
+    sim_plan:document.getElementById("s_plan").value.trim(),
+    sim_status:getFieldValue("s_status"),
+    sim_note:document.getElementById("s_note").value.trim()
+  };
+  var assetId=document.getElementById("s_asset").value;
+  try{
+    await apiPost("/api/sims",{data:fd,asset_id:assetId});
+    toast("登记成功");closeModal();renderSimTable();
+  }catch(e){document.getElementById("s_err").textContent=e.message;}
+}
+async function showEditSim(id){
+  var data=await apiGet("/api/sims");
+  var assets=await apiGet("/api/assets");
+  var s=(data.sims||[]).find(function(x){return x.id===id;});
+  if(!s){toast("卡不存在","err");return;}
+  var d=s.data||{};
+  var typeOpts="";
+  (data.simfields||[]).forEach(function(f){if(f.id==="sim_type")typeOpts=f.options;});
+  var typeHtml="";
+  (typeOpts||["移动","联通","电信","其他"]).forEach(function(o){typeHtml+="<span class=\"chip"+(d.sim_type===o?" on":"")+"\" data-v=\""+esc(o)+"\" onclick=\"pickChip(this)\">"+esc(o)+"</span>";});
+  var assetOpts="<option value=\"\">不绑定</option>";
+  assets.assets.forEach(function(a){assetOpts+="<option value=\""+a.id+"\""+(s.asset_id===a.id?" selected":"")+">"+esc(assetName(a))+"</option>";});
+  showModal("<h3>编辑电话卡</h3>"
+    +"<div class=\"field\"><label>卡号<span class=\"req\"> *</span></label><input id=\"s_no\" value=\""+esc(d.sim_no||"")+"\"></div>"
+    +"<div class=\"field\"><label>运营商</label><div class=\"chip-row\" id=\"s_type\">"+typeHtml+"</div></div>"
+    +"<div class=\"field\"><label>套餐</label><input id=\"s_plan\" value=\""+esc(d.sim_plan||"")+"\"></div>"
+    +"<div class=\"field\"><label>状态</label><select id=\"s_status\"><option value=\"在库\""+(d.sim_status==="在库"?" selected":"")+">在库</option><option value=\"在用\""+(d.sim_status==="在用"?" selected":"")+">在用</option><option value=\"停用\""+(d.sim_status==="停用"?" selected":"")+">停用</option><option value=\"遗失\""+(d.sim_status==="遗失"?" selected":"")+">遗失</option></select></div>"
+    +"<div class=\"field\"><label>绑定手机</label><select id=\"s_asset\">"+assetOpts+"</select></div>"
+    +"<div class=\"field\"><label>备注</label><input id=\"s_note\" value=\""+esc(d.sim_note||"")+"\"></div>"
+    +"<div class=\"m-btns\"><button class=\"btn btn-ghost\" onclick=\"closeModal()\">取消</button><button class=\"btn btn-primary\" onclick=\"saveEditSim('"+id+"')\">保存修改</button></div><div class=\"err\" id=\"s_err\"></div>");
+}
+async function saveEditSim(id){
+  var no=document.getElementById("s_no").value.trim();
+  if(!no){document.getElementById("s_err").textContent="请填写卡号";return;}
+  var fd={
+    sim_no:no,
+    sim_type:getFieldValue("s_type"),
+    sim_plan:document.getElementById("s_plan").value.trim(),
+    sim_status:document.getElementById("s_status").value,
+    sim_note:document.getElementById("s_note").value.trim()
+  };
+  var assetId=document.getElementById("s_asset").value;
+  try{
+    await apiPost("/api/sims/update",{id:id,data:fd,asset_id:assetId});
+    toast("已保存");closeModal();renderSimTable();
+  }catch(e){document.getElementById("s_err").textContent=e.message;}
+}
+async function delSimF(id){if(!confirm("删除该电话卡？"))return;try{await apiDel("/api/sims/"+id);toast("已删除");renderSimTable();}catch(e){toast(e.message,"err");}}
+
+
 async function renderWarehouse(){
   var data=await apiGet("/api/warehouse");
   var fields=await apiGet("/api/fields");
@@ -1398,20 +1617,33 @@ async function renderWarehouse(){
   var modelField=fields.fields.find(function(f){return f.label==="手机型号";});
   var cardField=fields.fields.find(function(f){return f.label==="手机卡类型";});
   var h="<div class=\"page-title\">仓库手机</div><div class=\"page-desc\">查看主管/组长录入的手机，勾选后可申请领用（需组长或主管审核同意）</div>";
-  h+="<div class=\"filter-bar\"><input id=\"whSearch\" placeholder=\"搜索型号/编号/手机号/登记人\" oninput=\"renderWarehouseTable()\" style=\"flex:2\"><select id=\"whModel\" onchange=\"renderWarehouseTable()\"><option value=\"\">全部型号</option>";
-  (modelField&&modelField.options||[]).forEach(function(o){h+="<option value=\""+esc(o)+"\">"+esc(o)+"</option>";});
-  h+="</select><select id=\"whCard\" onchange=\"renderWarehouseTable()\"><option value=\"\">全部卡类型</option>";
+  h+="<div class=\"filter-bar\"><input id=\"whSearch\" placeholder=\"搜索型号/编号/手机号/登记人\" oninput=\"renderWarehouseTable()\" style=\"flex:2\"><select id=\"whCard\" onchange=\"renderWarehouseTable()\"><option value=\"\">全部卡类型</option>";
   (cardField&&cardField.options||[]).forEach(function(o){h+="<option value=\""+esc(o)+"\">"+esc(o)+"</option>";});
   h+="</select><select id=\"whStatus\" onchange=\"renderWarehouseTable()\"><option value=\"\">全部状态</option><option value=\"available\">在库</option><option value=\"in_use\">已领用</option><option value=\"repairing\">维修中</option></select></div>";
+  h+="<div class=\"filter-bar\" style=\"flex-wrap:wrap\" id=\"whModelBar\">加载型号…</div>";
   h+="<div class=\"mb\" style=\"display:flex;gap:10px;align-items:center\"><button class=\"btn btn-primary\" id=\"whTakeBtn\" onclick=\"whBatchTake()\">📥 申请领用所选 (0)</button><span id=\"whSelInfo\" style=\"font-size:13px;color:var(--sub)\"></span></div>";
   h+="<div class=\"card\"><div class=\"c-head\"><h3>手机列表</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th style=\"width:36px\"><input type=\"checkbox\" id=\"whAll\" onchange=\"whToggleAll(this)\"></th><th>设备</th><th>状态</th><th>登记人</th><th>登记时间</th></tr></thead><tbody id=\"whBody\"></tbody></table></div></div>";
   document.getElementById("content").innerHTML=h;
+  renderWhModelBar();
   renderWarehouseTable();
 }
+async function renderWhModelBar(){
+  var bar=document.getElementById("whModelBar");if(!bar)return;
+  var fields=await apiGet("/api/fields");
+  var mf=fields.fields.find(function(f){return f.label==="手机型号";});
+  var models=mf&&mf.options?mf.options:[];
+  var h="<span style=\"font-size:12px;color:var(--faint);line-height:28px\">型号：</span>";
+  h+="<span class=\"chip"+(WH_MODEL===""?" on":"")+"\" data-v=\"\" onclick=\"filterWhModel(this)\">全部</span>";
+  models.forEach(function(o){
+    h+="<span class=\"chip"+(WH_MODEL===o?" on":"")+"\" data-v=\""+esc(o)+"\" onclick=\"filterWhModel(this)\">"+esc(o)+"</span>";
+  });
+  bar.innerHTML=h;
+}
+function filterWhModel(el){WH_MODEL=el.getAttribute("data-v");renderWhModelBar();renderWarehouseTable();}
 async function renderWarehouseTable(){
   var data=await apiGet("/api/warehouse");
   var kw=document.getElementById("whSearch")?(document.getElementById("whSearch").value||"").trim():"";
-  var mf=document.getElementById("whModel")?document.getElementById("whModel").value:"";
+  var mf=WH_MODEL;
   var cf=document.getElementById("whCard")?document.getElementById("whCard").value:"";
   var sf=document.getElementById("whStatus")?document.getElementById("whStatus").value:"";
   var h="";
@@ -1455,48 +1687,53 @@ async function whBatchTake(){
 // ===== 员工：我的设备 =====
 async function renderMyDev(){
   var data=await apiGet("/api/stats");
-  var h="<div class=\"page-title\">我的设备</div><div class=\"page-desc\">登记设备（直接生效），领用/退还/删除需主管审核</div>";
   var st=data.stats||{};
-  h+="<div class=\"kpi-row\">"+kpiCard("总手机号","#0a84ff",st.total)+kpiCard("闲置手机","#34c759",st.available)+kpiCard("在用手机","#7c5cff",st.inUse)+kpiCard("维修中","#ff9500",st.repairing)+"</div>";
-  h+="<div class=\"card\"><div class=\"c-head\"><h3>按手机卡类型</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th>卡类型</th><th>数量</th></tr></thead><tbody>";
-  var bc=st.byCard||{};var cks=Object.keys(bc);
-  if(!cks.length)h+="<tr><td colspan=\"2\" class=\"empty\">暂无数据</td></tr>";
-  cks.forEach(function(k){h+="<tr><td>"+esc(k)+"</td><td class=\"num\">"+bc[k]+"</td></tr>";});
-  h+="</tbody></table></div></div>";
-  h+="<div class=\"card\"><div class=\"c-head\"><h3>按手机型号</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th>型号</th><th>数量</th></tr></thead><tbody>";
-  var bm=st.byModel||{};var mks=Object.keys(bm);
-  if(!mks.length)h+="<tr><td colspan=\"2\" class=\"empty\">暂无数据</td></tr>";
-  mks.forEach(function(k){h+="<tr><td>"+esc(k)+"</td><td class=\"num\">"+bm[k]+"</td></tr>";});
-  h+="</tbody></table></div></div>";
+  var h="<div class=\"page-title\">我的设备</div><div class=\"page-desc\">登记即在用；退回仓库/报修需主管或组长审核</div>";
+  h+="<div class=\"kpi-row\">"+kpiCard("总手机号","#0a84ff",st.total)+kpiCard("在库","#34c759",st.available)+kpiCard("在用","#7c5cff",st.inUse)+kpiCard("维修中","#ff9500",st.repairing)+"</div>";
+  h+="<div class=\"filter-bar\" style=\"flex-wrap:wrap\"><input id=\"myDevSearch\" placeholder=\"搜索型号/编号/手机号\" oninput=\"renderMyDevList()\" style=\"flex:2\"><span id=\"myDevTypeBar\"></span></div>";
   h+="<div class=\"mb\"><button class=\"btn btn-primary\" onclick=\"showAddAsset()\">＋ 登记手机</button> <button class=\"btn btn-orange\" onclick=\"showMyTake()\">🛒 申请领用</button></div>";
-  h+="<div class=\"card\"><div class=\"c-head\"><h3>我的设备</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th>设备</th><th>状态</th><th>登记时间</th><th>操作</th></tr></thead><tbody id=\"myDevBody\"></tbody></table></div></div>";
+  h+="<div class=\"card\"><div class=\"c-head\"><h3>我的设备</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th>类型</th><th>型号</th><th>手机号</th><th>编号</th><th>状态/使用人</th><th>操作</th></tr></thead><tbody id=\"myDevBody\"></tbody></table></div></div>";
   document.getElementById("content").innerHTML=h;
+  renderMyDevTypeBar();
   renderMyDevList();
 }
+async function renderMyDevTypeBar(){
+  var bar=document.getElementById("myDevTypeBar");if(!bar)return;
+  var types=["","手机","电脑","平板","其他"];
+  var h="<span style=\"font-size:12px;color:var(--faint);line-height:28px\">类型：</span>";
+  types.forEach(function(tp){
+    h+="<span class=\"chip"+(MYDEV_TYPE===tp?" on":"")+"\" data-v=\""+tp+"\" onclick=\"filterMyDevType(this)\">"+(tp===""?"全部":tp)+"</span>";
+  });
+  bar.innerHTML=h;
+}
+function filterMyDevType(el){MYDEV_TYPE=el.getAttribute("data-v");renderMyDevTypeBar();renderMyDevList();}
 async function renderMyDevList(){
   var data=await apiGet("/api/assets");
   var uses=await apiGet("/api/uses");
   var reqs=await apiGet("/api/requests");
+  var kw=document.getElementById("myDevSearch")?(document.getElementById("myDevSearch").value||"").trim():"";
   var h="";
   data.assets.forEach(function(a){
-    var code=a.data&&a.data.code?"<span style=\"color:var(--faint);font-size:12px\">"+esc(a.data.code)+"</span>":"";
+    var d=a.data||{};
+    if(MYDEV_TYPE&&d.type!==MYDEV_TYPE)return;
+    if(kw&&(assetName(a)+" "+(d.model||"")+" "+(d.phone||"")+" "+(d.sn||"")).indexOf(kw)<0)return;
     var myUse=uses.uses.find(function(x){return x.asset_id===a.id&&!x.return_time;});
     var myReq=reqs.requests.find(function(x){return x.asset_id===a.id&&x.user_id===STATE.user.id&&x.status==="pending";});
-    h+="<tr><td><b>"+esc(assetName(a))+"</b> "+code+"</td><td>"+assetTag(a.status)+(myReq?"<br><span style=\"font-size:11px;color:var(--orange)\">待审中</span>":"")+"</td><td class=\"num\">"+esc(a.created)+"</td><td style=\"white-space:nowrap\">";
-    if(a.status==="available"){
-      h+="<button class=\"btn btn-sm btn-green\" onclick=\"setStatus('"+a.id+"','in_use')\">在用</button> ";
+    h+="<tr><td>"+esc(d.type||"—")+"</td><td>"+esc(d.model||"—")+"</td><td>"+esc(d.phone||"—")+"</td><td>"+esc(d.sn||"—")+"</td><td>"+assetTag(a.status)+(myUse?"<br><span style=\"font-size:11px;color:var(--faint)\">使用人："+esc(myUse.user_name)+"</span>":"")+(myReq?"<br><span style=\"font-size:11px;color:var(--orange)\">审核中</span>":"")+"</td><td style=\"white-space:nowrap\">";
+    if(a.status==="in_use"){
+      h+="<button class=\"btn btn-sm btn-orange\" onclick=\"reqReturn('"+a.id+"')\">退回仓库</button> ";
       h+="<button class=\"btn btn-sm btn-orange\" onclick=\"reqRepair('"+a.id+"')\">报修申请</button> ";
-    }else if(a.status==="in_use"){
-      h+="<button class=\"btn btn-sm btn-ghost\" onclick=\"setStatus('"+a.id+"','available')\">闲置</button> ";
-      h+="<button class=\"btn btn-sm btn-orange\" onclick=\"reqReturn('"+a.id+"')\">退还申请</button> ";
+    }else if(a.status==="available"){
+      h+="<button class=\"btn btn-sm btn-green\" onclick=\"setStatus('"+a.id+"','in_use')\">在用</button> ";
       h+="<button class=\"btn btn-sm btn-orange\" onclick=\"reqRepair('"+a.id+"')\">报修申请</button> ";
     }else{
       h+="<span style=\"color:var(--faint);font-size:12px\">—</span>";
     }
-    if(myReq)h+="<button class=\"btn btn-sm btn-danger\" onclick=\"cancelReq('"+myReq.id+"')\">撤销申请</button>";
+    h+="<button class=\"btn btn-sm btn-ghost\" onclick=\"openEditAsset('"+a.id+"',1)\">编辑</button> ";
+    if(myReq)h+="<button class=\"btn btn-sm btn-danger\" onclick=\"cancelReq('"+myReq.id+"')\">撤销</button>";
     h+="</td></tr>";
   });
-  if(!h)h="<tr><td colspan=\"4\" class=\"empty\">暂无设备，点击登记</td></tr>";
+  if(!h)h="<tr><td colspan=\"6\" class=\"empty\">暂无设备，点击登记</td></tr>";
   document.getElementById("myDevBody").innerHTML=h;
 }
 async function setStatus(id,status){
@@ -1583,7 +1820,7 @@ async function renderMyReq(){
   var data=await apiGet("/api/requests");
   var h="";
   data.requests.forEach(function(r){
-    var detail=r.type==="repair"?("故障："+esc(r.desc)):(r.type==="delete"?("原因："+esc(r.reason)):"");
+    var detail=r.type==="repair"?("故障："+esc(r.desc)):(r.type==="delete"?("原因："+esc(r.reason)):(r.type==="edit"?("修改："+esc(r.field==="model"?"手机型号":"手机编号")+" → "+esc(r.new_value)):""));
     h+="<div class=\"req-item\"><div class=\"r-top\">"+reqTypeTag(r.type)+"<b>"+esc(r.asset_name)+"</b>"+reqStatusTag(r.status)+"<span style=\"color:var(--faint);font-size:12px\">"+esc(r.created)+"</span></div>"
       +(detail?"<div class=\"r-desc\">"+detail+"</div>":"")
       +(r.status!=="pending"?("<div class=\"r-note\">处理人："+esc(r.handled_by||"—")+" · "+esc(r.handled_at||"—")+(r.note?" · "+esc(r.note):"")+"</div>"):"");
