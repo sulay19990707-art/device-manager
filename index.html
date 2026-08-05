@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>设备管理系统</title>
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 <style>
 :root{
   --bg:#eef1f5;--card:#fff;--ink:#1d1d1f;--sub:#6e6e73;--faint:#9aa0a6;
@@ -1397,7 +1398,7 @@ async function renderAssetTable(){
       extraTds+="<td>"+(d[f.id]?esc(d[f.id]):"<span style=\"color:var(--faint)\">—</span>")+"</td>";
     });
     // v12.4：设备/型号/编号/手机号独立列
-    h+="<tr><td><b>"+esc(d.type||"—")+"</b></td><td>"+esc(d.model||"—")+"</td><td>"+esc(d.sn||"—")+"</td><td>"+esc(d.phone||"—")+"</td>"+extraTds+"<td><button class=\"link-btn\" onclick=\"filterByUser(this)\" data-v=\""+a.created_by+"\">"+esc(a.created_by_name)+"</button></td><td>"+(showUser?"<b>"+esc(showUser)+"</b>":"<span style=\"color:var(--faint)\">—</span>")+"</td><td>"+assetTag(a.status)+"</td><td class=\"num\">"+esc(a.created)+"</td><td>";
+    h+="<tr><td><b>"+esc(d.type||"—")+"</b></td><td>"+esc(d.model||"—")+"</td><td>"+esc(d.sn||"—")+" <button class=\"link-btn\" onclick=\"showScanModal('"+a.id+"')\" title=\"扫码登记抖音账号\">📷</button></td><td>"+esc(d.phone||"—")+"</td>"+extraTds+"<td><button class=\"link-btn\" onclick=\"filterByUser(this)\" data-v=\""+a.created_by+"\">"+esc(a.created_by_name)+"</button></td><td>"+(showUser?"<b>"+esc(showUser)+"</b>":"<span style=\"color:var(--faint)\">—</span>")+"</td><td>"+assetTag(a.status)+"</td><td class=\"num\">"+esc(a.created)+"</td><td>";
     if(STATE.user.role!=="member")h+="<button class=\"btn btn-sm btn-ghost\" onclick=\"openEditAsset('"+a.id+"',0)\" style=\"margin-right:6px\">编辑</button>";
     if(a.status==="available"){
       h+="<button class=\"btn btn-sm btn-green\" onclick=\"showDirectTake('"+a.id+"')\">直接领用</button> ";
@@ -2181,7 +2182,7 @@ async function renderMyDevList(){
     var myReq=reqs.requests.find(function(x){return x.asset_id===a.id&&x.user_id===STATE.user.id&&x.status==="pending";});
     // v12.3：在库设备显示登记人（谁录的谁在用），在用显示实际使用人
     var showUser=myUse?myUse.user_name:(a.status==="available"?a.created_by_name:"");
-    h+="<tr><td>"+esc(d.type||"—")+"</td><td>"+esc(d.model||"—")+"</td><td>"+esc(d.phone||"—")+"</td><td>"+esc(d.sn||"—")+"</td><td>"+assetTag(a.status)+(showUser?"<br><span style=\"font-size:11px;color:var(--faint)\">使用人："+esc(showUser)+"</span>":"")+(myReq?"<br><span style=\"font-size:11px;color:var(--orange)\">审核中</span>":"")+"</td><td style=\"white-space:nowrap\">";
+    h+="<tr><td>"+esc(d.type||"—")+"</td><td>"+esc(d.model||"—")+"</td><td>"+esc(d.phone||"—")+"</td><td>"+esc(d.sn||"—")+" <button class=\"link-btn\" onclick=\"showScanModal('"+a.id+"')\" title=\"扫码登记抖音账号\">📷</button></td><td>"+assetTag(a.status)+(showUser?"<br><span style=\"font-size:11px;color:var(--faint)\">使用人："+esc(showUser)+"</span>":"")+(myReq?"<br><span style=\"font-size:11px;color:var(--orange)\">审核中</span>":"")+"</td><td style=\"white-space:nowrap\">";
     if(a.status==="in_use"){
       h+="<button class=\"btn btn-sm btn-orange\" onclick=\"reqReturn('"+a.id+"')\">退回仓库</button> ";
       h+="<button class=\"btn btn-sm btn-orange\" onclick=\"reqRepair('"+a.id+"')\">报修申请</button> ";
@@ -2275,6 +2276,101 @@ async function shipReturn(assetId){
     await apiPost("/api/shipments/"+s.id+"/return");
     toast("已确认寄回，手机恢复在用");renderMyDevList();refreshBadges();
   }catch(e){toast(e.message,"err");}
+}
+// ===== v12.12：扫码识别抖音账号（手机编号旁📷按钮） =====
+var SCAN_STREAM=null,SCAN_RAF=null,SCAN_FOR_ASSET="";
+function showScanModal(assetId){
+  SCAN_FOR_ASSET=assetId;
+  showModal("<h3>📷 扫码识别抖音账号</h3>"
+    +"<div style=\"position:relative\"><video id=\"scanVideo\" autoplay playsinline muted style=\"width:100%;border-radius:10px;background:#000;max-height:55vh\"></video></div>"
+    +"<div style=\"font-size:12px;color:var(--faint);margin-top:8px\">对准抖音「个人主页二维码/个人码」，自动识别账号信息</div>"
+    +"<div class=\"m-btns\"><button class=\"btn btn-ghost\" onclick=\"closeScan()\">取消</button></div>"
+    +"<div class=\"err\" id=\"scanErr\"></div>");
+  startScan();
+}
+function closeScan(){stopScan();closeModal();}
+async function startScan(){
+  try{
+    if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){
+      var el=document.getElementById("scanErr");if(el)el.textContent="当前浏览器不支持摄像头（请用手机浏览器或新版Chrome/Edge）";
+      return;
+    }
+    SCAN_STREAM=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"},audio:false});
+    var v=document.getElementById("scanVideo");
+    if(v)v.srcObject=SCAN_STREAM;
+    tickScan();
+  }catch(e){
+    var el=document.getElementById("scanErr");
+    if(el)el.textContent="无法打开相机："+e.message+(location.protocol!=="https:"?"（需要 HTTPS 环境）":"（请允许相机权限）");
+  }
+}
+function tickScan(){
+  var v=document.getElementById("scanVideo");
+  if(!v||!v.videoWidth)return;
+  try{
+    var c=document.createElement("canvas");
+    c.width=v.videoWidth;c.height=v.videoHeight;
+    var cx=c.getContext("2d");
+    cx.drawImage(v,0,0);
+    var img=cx.getImageData(0,0,c.width,c.height);
+    if(window.jsQR){
+      var code=jsQR(img.data,img.width,img.height,{inversionAttempts:"dontInvert"});
+      if(code&&code.data){
+        stopScan();
+        handleScanResult(code.data);
+        return;
+      }
+    }
+  }catch(e){}
+  SCAN_RAF=requestAnimationFrame(tickScan);
+}
+function stopScan(){
+  if(SCAN_RAF)cancelAnimationFrame(SCAN_RAF);SCAN_RAF=null;
+  if(SCAN_STREAM){try{SCAN_STREAM.getTracks().forEach(function(t){t.stop();});}catch(e){}SCAN_STREAM=null;}
+}
+// 解析抖音二维码内容（链接/文本）
+function extractDouyinInfo(text){
+  var t=String(text||"").trim();
+  var info={id:"",nick:"",url:""};
+  if(t.indexOf("http")===0)info.url=t;
+  var m=t.match(/douyin\.com\/user\/([A-Za-z0-9_\-]+)/);
+  if(m)info.id=m[1];
+  else{
+    var m2=t.match(/v\.douyin\.com\/([A-Za-z0-9]+)/);
+    if(m2)info.url="https://v.douyin.com/"+m2[1]+"/";
+  }
+  return info;
+}
+function handleScanResult(text){
+  var info=extractDouyinInfo(text);
+  var hint="";
+  if(!info.id&&!info.url)hint="<div class=\"r-note\">未识别到抖音链接，请手动填写</div>";
+  else if(!info.id)hint="<div class=\"r-note\">识别到主页链接（短链），ID 需手动填</div>";
+  showModal("<h3>扫码结果</h3>"
+    +hint
+    +"<div class=\"field\"><label>抖音ID</label><input id=\"sc_id\" value=\""+esc(info.id||"")+"\" placeholder=\"识别或手动填写\"></div>"
+    +"<div class=\"field\"><label>抖音昵称</label><input id=\"sc_nick\" value=\""+esc(info.nick||"")+"\" placeholder=\"昵称不在二维码里，请手动填写\"></div>"
+    +"<div class=\"field\"><label>主页链接</label><input id=\"sc_url\" value=\""+esc(info.url||"")+"\" placeholder=\"选填\"></div>"
+    +"<div class=\"m-btns\"><button class=\"btn btn-ghost\" onclick=\"closeModal()\">取消</button><button class=\"btn btn-primary\" onclick=\"saveScanResult()\">保存到这台手机</button></div><div class=\"err\" id=\"sc_err\"></div>");
+}
+async function saveScanResult(){
+  var id=document.getElementById("sc_id").value.trim();
+  var nick=document.getElementById("sc_nick").value.trim();
+  var url=document.getElementById("sc_url").value.trim();
+  if(!id&&!nick&&!url){document.getElementById("sc_err").textContent="没有可保存的内容";return;}
+  var data={};
+  if(id)data.douyin_id=id;
+  if(nick)data.nickname=nick;
+  if(url)data.douyin_url=url;
+  try{
+    if(STATE.user.role==="member"){
+      await apiPost("/api/actions/edit_my_asset",{asset_id:SCAN_FOR_ASSET,data:data});
+    }else{
+      await apiPost("/api/actions/edit_asset",{asset_id:SCAN_FOR_ASSET,data:data});
+    }
+    toast("已保存到该手机");closeModal();
+    if(STATE.user.role==="member")renderMyDevList();else renderAssetTable();
+  }catch(e){document.getElementById("sc_err").textContent=e.message;}
 }
 async function setStatus(id,status){
   var names={in_use:"确认将该手机设为在用？",available:"确认将该手机设为闲置？"};
