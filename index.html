@@ -685,8 +685,41 @@ function getWarehouse(tk){
   var u=verify(tk);if(!u)return[401,{error:"未登录"}];
   var list=D.assets.filter(function(a){
     return a.status!=="deleted";
-  }).sort(function(a,b){return b.created.localeCompare(a.created);});
+  });
+  // v12.5：数据隔离——组长只能看自己组的设备，员工只能看本组（组长+组员）设备
+  if(u.role==="leader"){
+    list=list.filter(function(a){return inScope(u,a.created_by);});
+  }else if(u.role==="member"){
+    var leader=D.users.find(function(x){return x.id===u.parent_id;});
+    list=list.filter(function(a){
+      if(a.created_by===u.id)return true;
+      return leader?inScope(leader,a.created_by):false;
+    });
+  }
+  list=list.sort(function(a,b){return b.created.localeCompare(a.created);});
   return[200,{assets:list}];
+}
+// v12.5：主管/组长代领用——把仓库设备直接分配给指定员工（员工忘申请时用）
+function batchAssign(tk,b){
+  var u=verify(tk);if(!u)return[401,{error:"未登录"}];
+  if(u.role!=="supervisor"&&u.role!=="leader")return[403,{error:"无权限"}];
+  var ids=b.asset_ids||[];
+  var target=D.users.find(function(x){return x.id===b.user_id;});
+  if(!ids.length)return[400,{error:"未选择设备"}];
+  if(!target)return[400,{error:"请选择要分配给的员工"}];
+  if(u.role==="leader"&&target.parent_id!==u.id)return[403,{error:"只能分配给自己的员工"}];
+  var ok=0,fail=0;
+  ids.forEach(function(aid){
+    var a=D.assets.find(function(x){return x.id===aid;});
+    if(!a||a.status!=="available"){fail++;return;}
+    if(u.role==="leader"&&!inScope(u,a.created_by)){fail++;return;}
+    if(D.uses.find(function(x){return x.asset_id===aid&&!x.return_time;})){fail++;return;}
+    a.status="in_use";
+    D.uses.push({id:uid(),asset_id:a.id,asset_name:assetName(a),user_id:target.id,user_name:target.name,take_time:nowStr(),return_time:""});
+    ok++;
+  });
+  if(!ok)return[400,{error:"所选设备都不可分配"}];
+  sv();return[200,{ok:true,assigned:ok,failed:fail,to:target.name}];
 }
 function batchTake(tk,b){
   var u=verify(tk);if(!u)return[401,{error:"未登录"}];
@@ -809,6 +842,7 @@ function route(method,path,tk,body){
   if(path==="/api/fields/move"&&method==="POST")return moveField(tk,body);
   if(path==="/api/fields/option_move"&&method==="POST")return moveOption(tk,body);
   if(path==="/api/warehouse"&&method==="GET")return getWarehouse(tk);
+  if(path==="/api/actions/assign"&&method==="POST")return batchAssign(tk,body);
   if(path==="/api/requests/batch_take"&&method==="POST")return batchTake(tk,body);
   if(path==="/api/requests/batch"&&method==="POST")return batchRequest(tk,body);
   if(pp[1]==="api"&&pp[2]==="users"&&pp.length===4&&method==="DELETE")return delUser(tk,pp[3]);
@@ -912,6 +946,7 @@ function renderSidebar(){
     items=[
       {id:"review",icon:"📋",label:"待审申请"},
       {id:"assets",icon:"📦",label:"设备台账"},
+      {id:"warehouse",icon:"🏬",label:"仓库手机"},
       {id:"sims",icon:"📇",label:"电话卡台账"},
       {id:"uses",icon:"🔁",label:"领用记录"},
       {id:"repairs",icon:"🔧",label:"维修管理"},
@@ -1635,16 +1670,40 @@ async function renderWarehouse(){
   var assets=data.assets||[];
   var modelField=fields.fields.find(function(f){return f.label==="手机型号";});
   var cardField=fields.fields.find(function(f){return f.label==="手机卡类型";});
-  var h="<div class=\"page-title\">仓库手机</div><div class=\"page-desc\">查看主管/组长录入的手机，勾选后可申请领用（需组长或主管审核同意）</div>";
+  var isManager=(STATE.user.role==="supervisor"||STATE.user.role==="leader");
+  var h="<div class=\"page-title\">仓库手机</div><div class=\"page-desc\">"+(isManager?"仓库放退回的设备，主管/组长可直接分配给员工，也可代员工申请领用":"查看仓库手机，勾选后可申请领用（需组长或主管审核同意）")+"</div>";
   h+="<div class=\"filter-bar\"><input id=\"whSearch\" placeholder=\"搜索型号/编号/手机号/登记人\" oninput=\"renderWarehouseTable()\" style=\"flex:2\"><select id=\"whCard\" onchange=\"renderWarehouseTable()\"><option value=\"\">全部卡类型</option>";
   (cardField&&cardField.options||[]).forEach(function(o){h+="<option value=\""+esc(o)+"\">"+esc(o)+"</option>";});
   h+="</select><select id=\"whStatus\" onchange=\"renderWarehouseTable()\"><option value=\"\">全部状态</option><option value=\"available\">在库</option><option value=\"in_use\">已领用</option><option value=\"repairing\">维修中</option></select></div>";
   h+="<div class=\"filter-bar\" style=\"flex-wrap:wrap\" id=\"whModelBar\">加载型号…</div>";
-  h+="<div class=\"mb\" style=\"display:flex;gap:10px;align-items:center\"><button class=\"btn btn-primary\" id=\"whTakeBtn\" onclick=\"whBatchTake()\">📥 申请领用所选 (0)</button><span id=\"whSelInfo\" style=\"font-size:13px;color:var(--sub)\"></span></div>";
+  h+="<div class=\"mb\" style=\"display:flex;gap:10px;align-items:center;flex-wrap:wrap\">";
+  if(isManager){
+    h+="<select id=\"whAssignUser\" style=\"height:38px;border:1.5px solid var(--line);border-radius:9px;padding:0 12px;font-size:13px;background:#fff\"><option value=\"\">选择要分配的员工…</option></select>";
+    h+="<button class=\"btn btn-green\" id=\"whAssignBtn\" onclick=\"whAssignTake()\">📤 领用给所选员工 (0)</button>";
+  }
+  h+="<button class=\"btn btn-primary\" id=\"whTakeBtn\" onclick=\"whBatchTake()\">📥 申请领用所选 (0)</button><span id=\"whSelInfo\" style=\"font-size:13px;color:var(--sub)\"></span></div>";
   h+="<div class=\"card\"><div class=\"c-head\"><h3>手机列表</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th style=\"width:36px\"><input type=\"checkbox\" id=\"whAll\" onchange=\"whToggleAll(this)\"></th><th>设备</th><th>手机型号</th><th>手机编号</th><th>手机号</th><th>状态</th><th>使用人</th><th>登记人</th><th>登记时间</th></tr></thead><tbody id=\"whBody\"></tbody></table></div></div>";
   document.getElementById("content").innerHTML=h;
+  // 加载可分配员工列表（主管=全部员工，组长=自己的员工）
+  if(isManager)loadWhAssignUsers();
   renderWhModelBar();
   renderWarehouseTable();
+}
+async function loadWhAssignUsers(){
+  try{
+    var data=await apiGet("/api/users");
+    var sel=document.getElementById("whAssignUser");if(!sel)return;
+    var h="<option value=\"\">选择要分配的员工…</option>";
+    var myRole=STATE.user.role;
+    (data.users||[]).forEach(function(u){
+      if(u.role==="leader"){
+        (u.members||[]).forEach(function(m){h+="<option value=\""+m.id+"\">"+esc(m.name)+"（"+esc(u.name)+"组）</option>";});
+      }else if(u.role==="member"){
+        h+="<option value=\""+u.id+"\">"+esc(u.name)+(myRole==="leader"?"（我组）":"（直属）")+"</option>";
+      }
+    });
+    sel.innerHTML=h;
+  }catch(e){}
 }
 async function renderWhModelBar(){
   var bar=document.getElementById("whModelBar");if(!bar)return;
@@ -1694,8 +1753,10 @@ function whUpdateSel(){
   var n=document.querySelectorAll(".wh-chk:checked").length;
   var btn=document.getElementById("whTakeBtn");
   if(btn)btn.textContent="📥 申请领用所选 ("+n+")";
+  var abtn=document.getElementById("whAssignBtn");
+  if(abtn)abtn.textContent="📤 领用给所选员工 ("+n+")";
   var info=document.getElementById("whSelInfo");
-  if(info)info.textContent=n?"已选 "+n+" 台，提交后需审核":"";
+  if(info)info.textContent=n?"已选 "+n+" 台":"";
 }
 async function whBatchTake(){
   var ids=Array.prototype.map.call(document.querySelectorAll(".wh-chk:checked"),function(c){return c.value;});
@@ -1705,6 +1766,19 @@ async function whBatchTake(){
     toast("已提交 "+r.submitted+" 台，等待审核");
     renderWarehouseTable();
     refreshBadges();
+  }catch(e){toast(e.message,"err");}
+}
+// v12.5：主管/组长代领用——把所选设备直接分配给指定员工
+async function whAssignTake(){
+  var ids=Array.prototype.map.call(document.querySelectorAll(".wh-chk:checked"),function(c){return c.value;});
+  if(!ids.length){toast("请先勾选要分配的手机","err");return;}
+  var uid=document.getElementById("whAssignUser")?(document.getElementById("whAssignUser").value):"";
+  if(!uid){toast("请选择要分配给的员工","err");return;}
+  if(!confirm("确认把这 "+ids.length+" 台手机直接分配给该员工？"))return;
+  try{
+    var r=await apiPost("/api/actions/assign",{asset_ids:ids,user_id:uid});
+    toast("已分配 "+r.assigned+" 台给 "+r.to);
+    renderWarehouseTable();
   }catch(e){toast(e.message,"err");}
 }
 
