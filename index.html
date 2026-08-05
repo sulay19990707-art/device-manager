@@ -247,6 +247,7 @@ async function pullCloud(force){
 function ensureSimData(){
   if(!D.simfields||!D.simfields.length)D.simfields=[{id:"sim_type",label:"运营商",type:"select",options:["移动","联通","电信","其他"],required:true}];
   if(!D.simcards)D.simcards=[];
+  if(!D.transfers)D.transfers=[];
 }
 function ensureCloud(){if(!cloudPromise)cloudPromise=pullCloud().then(function(){cloudReady=true;ensureSimData();});return cloudPromise;}
 function sv(){svLocal();D_DIRTY=true;pushCloud().then(function(){setTimeout(function(){D_DIRTY=false;},3000);}).catch(function(){D_DIRTY=false;});}
@@ -265,7 +266,7 @@ function initDB(){
       {id:"douyin_id",label:"抖音ID",type:"input",placeholder:"如：dy123456",required:false},
       {id:"note",label:"备注",type:"input",placeholder:"其他说明",required:false}
     ],
-    assets:[],uses:[],repairs:[],requests:[],
+    assets:[],uses:[],repairs:[],requests:[],transfers:[],
     simfields:[
       {id:"sim_type",label:"运营商",type:"select",options:["移动","联通","电信","其他"],required:true},
       {id:"sim_plan",label:"套餐",type:"input",placeholder:"如：39元/月",required:false},
@@ -773,6 +774,64 @@ function batchAssign(tk,b){
   if(!ok)return[400,{error:"所选设备都不可分配"}];
   sv();return[200,{ok:true,assigned:ok,failed:fail,to:target.name}];
 }
+// v12.8：员工间手机转让（A 发起 → B 确认）
+function sameGroup(u1,u2){
+  if(!u1||!u2)return false;
+  var g1=u1.parent_id||u1.id, g2=u2.parent_id||u2.id;
+  return g1===g2;
+}
+function postTransfer(tk,b){
+  var u=verify(tk);if(!u)return[401,{error:"未登录"}];
+  if(u.role!=="member")return[400,{error:"仅员工可发起转让"}];
+  var a=D.assets.find(function(x){return x.id===b.asset_id;});
+  if(!a||a.status!=="in_use")return[400,{error:"设备不在使用中，无法转让"}];
+  var myUse=D.uses.find(function(x){return x.asset_id===a.id&&!x.return_time;});
+  if(!myUse||myUse.user_id!==u.id)return[403,{error:"只能转让自己正在用的手机"}];
+  var to=D.users.find(function(x){return x.id===b.to_id;});
+  if(!to)return[400,{error:"接收人不存在"}];
+  if(to.id===u.id)return[400,{error:"不能转让给自己"}];
+  if(to.role!=="member")return[400,{error:"只能转让给员工"}];
+  if(!sameGroup(u,to))return[400,{error:"只能转让给同组的员工"}];
+  if((D.transfers||[]).find(function(t){return t.asset_id===a.id&&t.status==="pending";}))return[400,{error:"该手机已有待确认的转让"}];
+  D.transfers=(D.transfers||[]).concat([{id:uid(),asset_id:a.id,asset_name:assetName(a),from_id:u.id,from_name:u.name,to_id:to.id,to_name:to.name,note:b.note||"",status:"pending",created:nowStr(),handled_at:"",handled_note:""}]);
+  sv();return[200,{ok:true}];
+}
+function getTransfers(tk){
+  var u=verify(tk);if(!u)return[401,{error:"未登录"}];
+  var list=(D.transfers||[]).slice().sort(function(a,b){return b.created.localeCompare(a.created);});
+  if(u.role==="member"){
+    list=list.filter(function(t){return t.from_id===u.id||t.to_id===u.id;});
+  }else if(u.role==="leader"){
+    list=list.filter(function(t){return inScope(u,t.from_id)||inScope(u,t.to_id);});
+  }
+  return[200,{transfers:list}];
+}
+function doTransferAct(tk,id,b){
+  var u=verify(tk);if(!u)return[401,{error:"未登录"}];
+  var t=(D.transfers||[]).find(function(x){return x.id===id;});
+  if(!t)return[404,{error:"转让不存在"}];
+  if(t.status!=="pending")return[400,{error:"该转让已处理"}];
+  var act=b&&b.action;
+  if(act==="approve"){
+    if(t.to_id!==u.id&&u.role!=="supervisor")return[403,{error:"只有接收人能确认"}];
+    var a=D.assets.find(function(x){return x.id===t.asset_id;});
+    if(!a||a.status==="deleted")return[400,{error:"设备不存在"}];
+    var oldUse=D.uses.find(function(x){return x.asset_id===t.asset_id&&!x.return_time;});
+    if(oldUse)oldUse.return_time=nowStr();
+    D.uses.push({id:uid(),asset_id:t.asset_id,asset_name:t.asset_name,user_id:t.to_id,user_name:t.to_name,take_time:nowStr(),return_time:""});
+    if(a.status!=="repairing"&&a.status!=="scrapped")a.status="in_use";
+    t.status="approved";t.handled_at=nowStr();t.handled_note=(b&&b.note)||"";
+  }else if(act==="reject"){
+    if(t.to_id!==u.id&&u.role!=="supervisor")return[403,{error:"只有接收人能拒绝"}];
+    t.status="rejected";t.handled_at=nowStr();t.handled_note=(b&&b.note)||"";
+  }else if(act==="cancel"){
+    if(t.from_id!==u.id&&u.role!=="supervisor"&&u.role!=="leader")return[403,{error:"无权限"}];
+    t.status="cancelled";t.handled_at=nowStr();t.handled_note=(b&&b.note)||"";
+  }else{
+    return[400,{error:"操作不合法"}];
+  }
+  sv();return[200,{ok:true}];
+}
 function batchTake(tk,b){
   var u=verify(tk);if(!u)return[401,{error:"未登录"}];
   var ids=b.asset_ids||[];
@@ -900,6 +959,9 @@ function route(method,path,tk,body){
   if(path==="/api/fields/option_move"&&method==="POST")return moveOption(tk,body);
   if(path==="/api/warehouse"&&method==="GET")return getWarehouse(tk);
   if(path==="/api/actions/assign"&&method==="POST")return batchAssign(tk,body);
+  if(path==="/api/transfers"&&method==="GET")return getTransfers(tk);
+  if(path==="/api/transfers"&&method==="POST")return postTransfer(tk,body);
+  if(pp[1]==="api"&&pp[2]==="transfers"&&pp.length===4&&method==="POST")return doTransferAct(tk,pp[3],body);
   if(path==="/api/requests/batch_take"&&method==="POST")return batchTake(tk,body);
   if(path==="/api/requests/batch"&&method==="POST")return batchRequest(tk,body);
   if(pp[1]==="api"&&pp[2]==="users"&&pp.length===4&&method==="DELETE")return delUser(tk,pp[3]);
@@ -1046,7 +1108,14 @@ async function refreshBadges(){
     var myP=data.stats.myPending||0;
     var set=function(id,n){var el=document.getElementById("badge_"+id);if(el){if(n>0){el.style.display="flex";el.textContent=n;}else{el.style.display="none";}}};
     if(STATE.user.role==="supervisor"){set("review",pending);}
-    else{set("mymain",myP);}
+    else{
+      // v12.8：我的申请角标 = 我的申请 + 待我确认的转让
+      try{
+        var tf=await apiGet("/api/transfers");
+        var waitMe=(tf.transfers||[]).filter(function(t){return t.status==="pending"&&t.to_id===STATE.user.id;}).length;
+        set("mymain",myP+waitMe);
+      }catch(e){set("mymain",myP);}
+    }
   }catch(e){}
 }
 
@@ -1377,8 +1446,24 @@ async function renderUses(){
   var h="<div class=\"page-title\">领用记录</div><div class=\"page-desc\">全部设备的领用与归还情况</div>";
   h+="<div class=\"filter-bar\"><input id=\"useSearch\" placeholder=\"搜索设备/领用人\" oninput=\"renderUseTable()\"></div>";
   h+="<div class=\"card\"><div class=\"c-head\"><h3>领用记录</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th>设备</th><th>领用人</th><th>领用时间</th><th>归还时间</th><th>状态</th><th>操作</th></tr></thead><tbody id=\"useTableBody\"></tbody></table></div></div>";
+  h+="<div class=\"card\"><div class=\"c-head\"><h3>转让记录</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th>设备</th><th>转出人</th><th>接收人</th><th>状态</th><th>发起时间</th><th>处理时间</th></tr></thead><tbody id=\"tfTableBody\"></tbody></table></div></div>";
   document.getElementById("content").innerHTML=h;
   renderUseTable();
+  renderTfTable();
+}
+// v12.8：主管查看转让记录（审计留痕）
+async function renderTfTable(){
+  try{
+    var data=await apiGet("/api/transfers");
+    var h="";
+    var stTag={pending:["待确认","tag-orange"],approved:["已转让","tag-green"],rejected:["已拒绝","tag-red"],cancelled:["已撤销","tag-gray"]};
+    (data.transfers||[]).forEach(function(t){
+      var st=stTag[t.status]||["",""];
+      h+="<tr><td><b>"+esc(t.asset_name)+"</b></td><td>"+esc(t.from_name)+"</td><td>"+esc(t.to_name)+"</td><td><span class=\"tag "+st[1]+"\">"+st[0]+"</span></td><td class=\"num\">"+esc(t.created)+"</td><td class=\"num\">"+(t.handled_at?esc(t.handled_at):"—")+"</td></tr>";
+    });
+    if(!h)h="<tr><td colspan=\"6\" class=\"empty\">暂无转让记录</td></tr>";
+    document.getElementById("tfTableBody").innerHTML=h;
+  }catch(e){}
 }
 async function renderUseTable(){
   var data=await apiGet("/api/uses");
@@ -1961,6 +2046,8 @@ async function renderMyDevList(){
     if(a.status==="in_use"){
       h+="<button class=\"btn btn-sm btn-orange\" onclick=\"reqReturn('"+a.id+"')\">退回仓库</button> ";
       h+="<button class=\"btn btn-sm btn-orange\" onclick=\"reqRepair('"+a.id+"')\">报修申请</button> ";
+      // v12.8：只有当前使用人能发起转让
+      if(myUse&&myUse.user_id===STATE.user.id)h+="<button class=\"btn btn-sm btn-blue\" onclick=\"showTransfer('"+a.id+"')\">转让</button> ";
     }else if(a.status==="available"){
       h+="<button class=\"btn btn-sm btn-green\" onclick=\"setStatus('"+a.id+"','in_use')\">在用</button> ";
       h+="<button class=\"btn btn-sm btn-orange\" onclick=\"reqRepair('"+a.id+"')\">报修申请</button> ";
@@ -1973,6 +2060,38 @@ async function renderMyDevList(){
   });
   if(!h)h="<tr><td colspan=\"6\" class=\"empty\">暂无设备，点击登记</td></tr>";
   document.getElementById("myDevBody").innerHTML=h;
+}
+// v12.8：员工转让手机（A 发起 → B 确认）
+async function showTransfer(assetId){
+  var data=await apiGet("/api/users");
+  var assets=await apiGet("/api/assets");
+  var a=assets.assets.find(function(x){return x.id===assetId;});
+  if(!a){toast("设备不存在","err");return;}
+  // 同组员工列表（主管直属员工之间/同组长员工之间）
+  var my=D.users.find(function(x){return x.id===STATE.user.id;});
+  var gid=my?my.parent_id:"";
+  var opts="<option value=\"\">选择接收员工…</option>";
+  (data.users||[]).forEach(function(u){
+    if(u.role==="member"&&u.id!==STATE.user.id){
+      var same=gid?(u.parent_id===gid):true;
+      if(same)opts+="<option value=\""+u.id+"\">"+esc(u.name)+"</option>";
+    }
+  });
+  if(opts==="<option value=\"\">选择接收员工…</option>")opts+="<option value=\"\" disabled>（暂无同组员工可转）</option>";
+  showModal("<h3>转让手机</h3>"
+    +"<div style=\"font-size:13px;color:var(--sub);margin-bottom:12px\">把 <b>"+esc(assetName(a))+"</b> 转让给同组员工，对方确认后生效</div>"
+    +"<div class=\"field\"><label>接收员工<span class=\"req\"> *</span></label><select id=\"tf_to\">"+opts+"</select></div>"
+    +"<div class=\"field\"><label>备注</label><input id=\"tf_note\" placeholder=\"可填写说明（选填）\"></div>"
+    +"<div class=\"m-btns\"><button class=\"btn btn-ghost\" onclick=\"closeModal()\">取消</button><button class=\"btn btn-primary\" onclick=\"submitTransfer('"+assetId+"')\">发起转让</button></div><div class=\"err\" id=\"tf_err\"></div>");
+}
+async function submitTransfer(assetId){
+  var toId=document.getElementById("tf_to").value;
+  var note=document.getElementById("tf_note").value.trim();
+  if(!toId){document.getElementById("tf_err").textContent="请选择接收员工";return;}
+  try{
+    await apiPost("/api/transfers",{asset_id:assetId,to_id:toId,note:note});
+    toast("转让已发起，等待对方确认");closeModal();renderMyDevList();refreshBadges();
+  }catch(e){document.getElementById("tf_err").textContent=e.message;}
 }
 async function setStatus(id,status){
   var names={in_use:"确认将该手机设为在用？",available:"确认将该手机设为闲置？"};
@@ -2029,11 +2148,51 @@ async function submitDelete(id){
 // ===== 员工：报修申请 =====
 async function renderMyMain(){
   var data=await apiGet("/api/stats");
-  var h="<div class=\"page-title\">我的申请</div><div class=\"page-desc\">报修申请与所有申请进度</div>";
+  var transfers=await apiGet("/api/transfers");
+  var h="<div class=\"page-title\">我的申请</div><div class=\"page-desc\">报修申请、手机转让与所有申请进度</div>";
   h+="<div class=\"mb\"><button class=\"btn btn-orange\" onclick=\"showMyRepair()\">🔧 申请报修</button></div>";
+  // v12.8：待我确认的转让
+  var waitMe=transfers.transfers.filter(function(t){return t.status==="pending"&&t.to_id===STATE.user.id;});
+  h+="<div class=\"card\"><div class=\"c-head\"><h3>待我确认的转让"+(waitMe.length?" <span class=\"nav-badge\" style=\"display:inline-flex;vertical-align:middle\">"+waitMe.length+"</span>":"")+"</h3></div><div class=\"c-body\" id=\"tfWaitBody\">";
+  if(waitMe.length){
+    waitMe.forEach(function(t){
+      h+="<div class=\"req-item\"><div class=\"r-top\"><span class=\"tag tag-blue\">转让</span><b>"+esc(t.asset_name)+"</b><span style=\"color:var(--faint);font-size:12px\">"+esc(t.from_name)+" 转给你 · "+esc(t.created)+"</span></div>"
+        +(t.note?"<div class=\"r-desc\">备注："+esc(t.note)+"</div>":"")
+        +"<div class=\"m-btns\" style=\"margin-top:8px\"><button class=\"btn btn-sm btn-green\" onclick=\"actTransfer('"+t.id+"','approve')\">✅ 同意接收</button> <button class=\"btn btn-sm btn-danger\" onclick=\"actTransfer('"+t.id+"','reject')\">拒绝</button></div></div>";
+    });
+  }else{
+    h+="<div class=\"empty\">暂无待确认的转让</div>";
+  }
+  h+="</div></div>";
+  // 我发起的转让
+  var myTf=transfers.transfers.filter(function(t){return t.from_id===STATE.user.id;});
+  h+="<div class=\"card\"><div class=\"c-head\"><h3>我发起的转让</h3></div><div class=\"c-body\" id=\"tfMyBody\">";
+  if(myTf.length){
+    var stTag={pending:["待确认","tag-orange"],approved:["已转让","tag-green"],rejected:["已拒绝","tag-red"],cancelled:["已撤销","tag-gray"]};
+    myTf.forEach(function(t){
+      var st=stTag[t.status]||["",""];
+      h+="<div class=\"req-item\"><div class=\"r-top\"><span class=\"tag tag-blue\">转让</span><b>"+esc(t.asset_name)+"</b><span class=\"tag "+st[1]+"\">"+st[0]+"</span><span style=\"color:var(--faint);font-size:12px\">给 "+esc(t.to_name)+" · "+esc(t.created)+"</span></div>"
+        +(t.note?"<div class=\"r-desc\">备注："+esc(t.note)+"</div>":"")
+        +(t.handled_at?(t.status==="approved"?"<div class=\"r-note\">"+esc(t.to_name)+" 已同意 · "+esc(t.handled_at)+"</div>":(t.status==="rejected"?"<div class=\"r-note\">"+esc(t.to_name)+" 已拒绝 · "+esc(t.handled_at)+(t.handled_note?" · "+esc(t.handled_note):"")+"</div>":"")):"")
+        +(t.status==="pending"?"<button class=\"btn btn-sm btn-danger\" style=\"margin-top:6px\" onclick=\"actTransfer('"+t.id+"','cancel')\">撤销</button>":"");
+      h+="</div>";
+    });
+  }else{
+    h+="<div class=\"empty\">暂无发起的转让</div>";
+  }
+  h+="</div></div>";
   h+="<div class=\"card\"><div class=\"c-head\"><h3>申请记录</h3></div><div class=\"c-body\" id=\"myReqBody\"></div></div>";
   document.getElementById("content").innerHTML=h;
   renderMyReq();
+}
+// v12.8：确认/拒绝/撤销转让
+async function actTransfer(id,action){
+  var names={approve:"确认同意接收该手机？",reject:"确认拒绝？拒绝后对方可转给其他人",cancel:"确认撤销该转让？"};
+  if(!confirm(names[action]))return;
+  try{
+    await apiPost("/api/transfers/"+id,{action:action});
+    toast(action==="approve"?"已同意，手机已归你使用":"已处理");renderMyMain();refreshBadges();
+  }catch(e){toast(e.message,"err");}
 }
 async function showMyRepair(){
   var data=await apiGet("/api/assets");
