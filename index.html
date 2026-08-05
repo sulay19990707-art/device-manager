@@ -79,6 +79,7 @@ tr:hover td{background:#fafbfd}
 .btn-primary{background:var(--blue);color:#fff}
 .btn-primary:hover{background:#0071e3}
 .btn-green{background:var(--green);color:#fff}
+.btn-blue{background:#0a84ff;color:#fff}
 .btn-green:hover{background:#2fb64f}
 .btn-danger{background:#fff;color:var(--red);border:1px solid #ffd7d5}
 .btn-danger:hover{background:var(--red-bg)}
@@ -188,7 +189,7 @@ var DEFAULT_FIELDS=[
   {id:"model",label:"手机型号",type:"select",options:["iPhone 13","iPhone 14","iPhone 15","Mate60","Mate60 Pro","Redmi K70","其他"],required:true},
   {id:"phone",label:"手机号码",type:"input",placeholder:"如：13800008888",required:false},
   {id:"card",label:"手机卡类型",type:"select",options:["移动","联通","电信","其他"],required:false},
-  {id:"sn",label:"手机编号",type:"input",placeholder:"如：IMEI/SN（不可重复）",required:false},
+  {id:"sn",label:"手机编号",type:"input",placeholder:"如：IMEI/SN（不可重复）",required:true},
   {id:"platform",label:"抖音平台",type:"select",options:["抖音","抖音极速版","抖音火山版"],required:false},
   {id:"nickname",label:"抖音昵称",type:"input",placeholder:"抖音昵称",required:false},
   {id:"douyin_id",label:"抖音ID",type:"input",placeholder:"如：dy123456",required:false},
@@ -383,7 +384,7 @@ function postAsset(tk,b){
   var data={};for(var k in b.data)data[k]=b.data[k];
   var snId=findFieldId("手机编号");
   if(snId&&data[snId]&&D.assets.find(function(x){return x.data&&x.data[snId]===data[snId]&&x.status!=="deleted";}))return[400,{error:"手机编号已存在，不能重复"}];
-  D.assets.push({id:uid(),data:data,status:"in_use",created:nowStr(),created_by:u.id,created_by_name:u.name});
+  D.assets.push({id:uid(),data:data,status:(u.role==="member"?"available":"in_use"),created:nowStr(),created_by:u.id,created_by_name:u.name});
   sv();return[200,{ok:true}];
 }
 function findFieldId(label){var f=D.fields.find(function(x){return x.label===label;});return f?f.id:null;}
@@ -631,6 +632,33 @@ function batchTake(tk,b){
   sv();return[200,{ok:true,submitted:ok,failed:fail}];
 }
 
+function updateUser(tk,b){
+  var u=verify(tk);if(!u)return[401,{error:"未登录"}];
+  var m=D.users.find(function(x){return x.id===b.id;});
+  if(!m)return[404,{error:"账号不存在"}];
+  if(u.role==="supervisor"){
+    if(m.role!=="member"&&m.role!=="leader")return[403,{error:"不能修改该账号"}];
+  }else if(u.role==="leader"){
+    if(m.role!=="member"||m.parent_id!==u.id)return[403,{error:"只能修改自己的员工"}];
+  }else{
+    return[403,{error:"无权限"}];
+  }
+  var newName=b.name?(b.name||"").trim():m.name;
+  var newUser=b.username?(b.username||"").trim():m.username;
+  if(!newName||!newUser)return[400,{error:"姓名和账号不能为空"}];
+  if(D.users.find(function(x){return x.username===newUser&&x.id!==m.id;}))return[400,{error:"账号已存在"}];
+  m.name=newName;m.username=newUser;
+  if(b.password)m.password=b.password.trim();
+  sv();return[200,{ok:true}];
+}
+function toWarehouse(tk,b){
+  var u=verify(tk);if(!u)return[401,{error:"未登录"}];
+  if(u.role!=="supervisor"&&u.role!=="leader")return[403,{error:"无权限"}];
+  var a=D.assets.find(function(x){return x.id===b.asset_id;});if(!a)return[404,{error:"设备不存在"}];
+  if(u.role==="leader"&&!inScope(u,a.created_by))return[403,{error:"只能转移自己组的设备"}];
+  D.uses=D.uses.filter(function(x){return x.asset_id!==a.id;});
+  a.status="available";sv();return[200,{ok:true}];
+}
 function actionDelete(tk,b){
   var u=verify(tk);if(!u)return[401,{error:"未登录"}];
   if(u.role!=="supervisor"&&u.role!=="leader")return[403,{error:"无权限"}];
@@ -698,6 +726,8 @@ function route(method,path,tk,body){
   if(path==="/api/actions/return_asset"&&method==="POST")return actionReturnAsset(tk,body);
   if(path==="/api/actions/edit_asset"&&method==="POST")return editAsset(tk,body);
   if(path==="/api/actions/edit_my_asset"&&method==="POST")return editMyAsset(tk,body);
+  if(path==="/api/users/update"&&method==="POST")return updateUser(tk,body);
+  if(path==="/api/actions/to_warehouse"&&method==="POST")return toWarehouse(tk,body);
   if(path==="/api/fields/move"&&method==="POST")return moveField(tk,body);
   if(path==="/api/fields/option_move"&&method==="POST")return moveOption(tk,body);
   if(path==="/api/warehouse"&&method==="GET")return getWarehouse(tk);
@@ -986,6 +1016,7 @@ async function renderAssetTable(){
       h+="<button class=\"btn btn-sm btn-danger\" onclick=\"directDelAsset('"+a.id+"')\">删除</button>";
     }else if(a.status==="in_use"){
       if(STATE.user.role!=="member")h+="<button class=\"btn btn-sm btn-green\" onclick=\"returnByAsset('"+a.id+"')\" style=\"margin-right:6px\">归还</button>";
+      if(STATE.user.role!=="member")h+="<button class=\"btn btn-sm btn-blue\" onclick=\"toWarehouseAsset('"+a.id+"')\" style=\"margin-right:6px\">转仓库</button>";
       if(STATE.user.role!=="member")h+="<button class=\"btn btn-sm btn-danger\" onclick=\"directDelAsset('"+a.id+"')\" style=\"margin-right:6px\">删除</button>";
       h+="<span style=\"color:var(--faint);font-size:12px\">使用中</span>";
     }else if(a.status==="repairing"){
@@ -1105,6 +1136,7 @@ async function showDirectTake(id){
 async function directTake(id){
   try{await apiPost("/api/actions/take",{asset_id:id});toast("已领用");closeModal();renderAssetTable();}catch(e){toast(e.message,"err");}
 }
+async function toWarehouseAsset(id){if(!confirm("把该手机转入仓库（在库状态）？"))return;try{await apiPost("/api/actions/to_warehouse",{asset_id:id});toast("已转入仓库");renderAssetTable();}catch(e){toast(e.message,"err");}}
 async function directDelAsset(id){if(!confirm("直接删除该设备？"))return;try{await apiPost("/api/actions/delete",{asset_id:id});toast("已删除");renderAssetTable();}catch(e){toast(e.message,"err");}}
 
 // ===== 主管：领用记录 =====
@@ -1255,7 +1287,7 @@ async function renderLeaderTable(){
   var h="";
   (data.users||[]).forEach(function(l){
     if(l.role!=="leader")return;
-    h+="<tr><td><b>"+esc(l.name)+"</b></td><td>"+esc(l.username)+"</td><td class=\"num\">"+(l.members?l.members.length:0)+"</td><td style=\"white-space:nowrap\"><button class=\"btn btn-sm btn-ghost\" onclick=\"showLeaderMembers('"+l.id+"','"+esc(l.name)+"')\">查看组员</button> <button class=\"btn btn-sm btn-danger\" onclick=\"delMember('"+l.id+"')\">删除</button></td></tr>";
+    h+="<tr><td><b>"+esc(l.name)+"</b></td><td>"+esc(l.username)+"</td><td class=\"num\">"+(l.members?l.members.length:0)+"</td><td style=\"white-space:nowrap\"><button class=\"btn btn-sm btn-ghost\" onclick=\"showLeaderMembers('"+l.id+"','"+esc(l.name)+"')\">查看组员</button> <button class=\"btn btn-sm btn-ghost\" onclick=\"showEditUser('"+l.id+"')\">编辑</button> <button class=\"btn btn-sm btn-danger\" onclick=\"delMember('"+l.id+"')\">删除</button></td></tr>";
   });
   if(!h)h="<tr><td colspan=\"4\" class=\"empty\">暂无组长，点击右上角添加</td></tr>";
   document.getElementById("leaderTableBody").innerHTML=h;
@@ -1264,7 +1296,7 @@ async function renderDirectMembers(){
   var data=await apiGet("/api/users");
   var h="";
   (data.users||[]).filter(function(m){return m.role==="member";}).forEach(function(m){
-    h+="<tr><td><b>"+esc(m.name)+"</b></td><td>"+esc(m.username)+"</td><td class=\"num\">"+esc(m.created)+"</td><td><button class=\"btn btn-sm btn-danger\" onclick=\"delMember('"+m.id+"')\">删除</button></td></tr>";
+    h+="<tr><td><b>"+esc(m.name)+"</b></td><td>"+esc(m.username)+"</td><td class=\"num\">"+esc(m.created)+"</td><td style=\"white-space:nowrap\"><button class=\"btn btn-sm btn-ghost\" onclick=\"showEditUser('"+m.id+"')\">编辑</button> <button class=\"btn btn-sm btn-danger\" onclick=\"delMember('"+m.id+"')\">删除</button></td></tr>";
   });
   if(!h)h="<tr><td colspan=\"4\" class=\"empty\">暂无直属员工，点击右上角添加</td></tr>";
   document.getElementById("directMemberBody").innerHTML=h;
@@ -1283,12 +1315,34 @@ async function renderMemberTable(){
   var kw=document.getElementById("memSearch")?(document.getElementById("memSearch").value||"").trim():"";
   var h="";
   (data.users||[]).filter(function(m){return !kw||(m.name+" "+m.username).indexOf(kw)>=0;}).forEach(function(m){
-    h+="<tr><td><b>"+esc(m.name)+"</b></td><td>"+esc(m.username)+"</td><td class=\"num\">"+esc(m.created)+"</td><td><button class=\"btn btn-sm btn-danger\" onclick=\"delMember('"+m.id+"')\">删除</button></td></tr>";
+    h+="<tr><td><b>"+esc(m.name)+"</b></td><td>"+esc(m.username)+"</td><td class=\"num\">"+esc(m.created)+"</td><td style=\"white-space:nowrap\"><button class=\"btn btn-sm btn-ghost\" onclick=\"showEditUser('"+m.id+"')\">编辑</button> <button class=\"btn btn-sm btn-danger\" onclick=\"delMember('"+m.id+"')\">删除</button></td></tr>";
   });
   if(!h)h="<tr><td colspan=\"4\" class=\"empty\">暂无员工，点击右上角添加</td></tr>";
   document.getElementById("memberTableBody").innerHTML=h;
 }
 async function delMember(id){if(!confirm("删除该账号？"))return;try{await apiDel("/api/users/"+id);toast("已删除");if(STATE.user.role==="supervisor"){renderLeaderTable();renderDirectMembers();}else{renderMemberTable();}}catch(e){toast(e.message,"err");}}
+async function showEditUser(id){
+  var data=await apiGet("/api/users");
+  var u=(data.users||[]).find(function(x){return x.id===id;});
+  if(!u){toast("账号不存在","err");return;}
+  showModal("<h3>修改账号</h3>"
+    +"<div style=\"font-size:13px;color:var(--sub);margin-bottom:12px\">修改「"+esc(u.name)+"」的账号信息（如员工离职可全部改掉）</div>"
+    +"<div class=\"field\"><label>姓名</label><input id=\"eu_name\" value=\""+esc(u.name)+"\"></div>"
+    +"<div class=\"field\"><label>账号（拼音）</label><input id=\"eu_user\" value=\""+esc(u.username)+"\"></div>"
+    +"<div class=\"field\"><label>密码（留空不修改）</label><input id=\"eu_pwd\" placeholder=\"默认 123456\"></div>"
+    +"<div class=\"m-btns\"><button class=\"btn btn-ghost\" onclick=\"closeModal()\">取消</button><button class=\"btn btn-primary\" onclick=\"saveEditUser('"+id+"')\">保存修改</button></div><div class=\"err\" id=\"eu_err\"></div>");
+}
+async function saveEditUser(id){
+  var name=document.getElementById("eu_name").value.trim();
+  var user=document.getElementById("eu_user").value.trim();
+  var pwd=document.getElementById("eu_pwd").value.trim();
+  if(!name||!user){document.getElementById("eu_err").textContent="姓名和账号不能为空";return;}
+  try{
+    await apiPost("/api/users/update",{id:id,name:name,username:user,password:pwd});
+    toast("账号已修改");closeModal();
+    if(STATE.user.role==="supervisor"){renderLeaderTable();renderDirectMembers();}else{renderMemberTable();}
+  }catch(e){document.getElementById("eu_err").textContent=e.message;}
+}
 function showAddMember(){
   showModal("<h3>添加员工</h3>"
     +"<div class=\"field\"><label>姓名</label><input id=\"m_name\" placeholder=\"如：小李\"></div>"
@@ -1418,7 +1472,6 @@ async function renderMyDevList(){
     var myUse=uses.uses.find(function(x){return x.asset_id===a.id&&!x.return_time;});
     var myReq=reqs.requests.find(function(x){return x.asset_id===a.id&&x.user_id===STATE.user.id&&x.status==="pending";});
     h+="<tr><td><b>"+esc(assetName(a))+"</b> "+code+"</td><td>"+assetTag(a.status)+(myReq?"<br><span style=\"font-size:11px;color:var(--orange)\">待审中</span>":"")+"</td><td class=\"num\">"+esc(a.created)+"</td><td style=\"white-space:nowrap\">";
-    if(a.created_by===STATE.user.id)h+="<button class=\"btn btn-sm btn-ghost\" onclick=\"openEditAsset('"+a.id+"',1)\" style=\"margin-right:6px\">编辑</button>";
     if(a.status==="available"){
       h+="<button class=\"btn btn-sm btn-green\" onclick=\"setStatus('"+a.id+"','in_use')\">在用</button> ";
       h+="<button class=\"btn btn-sm btn-orange\" onclick=\"reqRepair('"+a.id+"')\">报修申请</button> ";
