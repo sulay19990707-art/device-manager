@@ -287,7 +287,7 @@ function getUsers(tk){
       });
       list.push(item);
     });
-    D.users.filter(function(x){return x.role==="member"&&(!x.parent_id||x.parent_id==="");}).forEach(function(m){
+    D.users.filter(function(x){return x.role==="member"&&x.parent_id===u.id;}).forEach(function(m){
       list.push({id:m.id,name:m.name,username:m.username,role:"member",created:m.created,members:[]});
     });
   }else if(u.role==="leader"){
@@ -550,7 +550,7 @@ function actionDelete(tk,b){
   if(u.role!=="supervisor"&&u.role!=="leader")return[403,{error:"无权限"}];
   var a=D.assets.find(function(x){return x.id===b.asset_id;});if(!a)return[404,{error:"设备不存在"}];
   if(u.role==="leader"&&!inScope(u,a.created_by))return[403,{error:"只能删除自己组的设备"}];
-  if(a.status==="in_use")return[400,{error:"设备使用中，先归还再删除"}];
+  D.uses=D.uses.filter(function(x){return x.asset_id!==a.id;});
   a.status="deleted";sv();return[200,{ok:true}];
 }
 
@@ -716,7 +716,7 @@ function renderSidebar(){
       {id:"repairs",icon:"🔧",label:"维修管理"},
       {id:"stats",icon:"📊",label:"数据统计"},
       {id:"options",icon:"⚙️",label:"选项管理"},
-      {id:"members",icon:"👤",label:"组长账号"}
+      {id:"members",icon:"👤",label:"账号管理"}
     ];
   }else if(role==="leader"){
     items=[
@@ -863,8 +863,10 @@ async function renderAssetTable(){
       h+="<button class=\"btn btn-sm btn-danger\" onclick=\"directDelAsset('"+a.id+"')\">删除</button>";
     }else if(a.status==="in_use"){
       if(STATE.user.role!=="member")h+="<button class=\"btn btn-sm btn-green\" onclick=\"returnByAsset('"+a.id+"')\" style=\"margin-right:6px\">归还</button>";
+      if(STATE.user.role!=="member")h+="<button class=\"btn btn-sm btn-danger\" onclick=\"directDelAsset('"+a.id+"')\" style=\"margin-right:6px\">删除</button>";
       h+="<span style=\"color:var(--faint);font-size:12px\">使用中</span>";
     }else if(a.status==="repairing"){
+      if(STATE.user.role!=="member")h+="<button class=\"btn btn-sm btn-danger\" onclick=\"directDelAsset('"+a.id+"')\" style=\"margin-right:6px\">删除</button>";
       h+="<span style=\"color:var(--faint);font-size:12px\">维修中</span>";
     }else{
       h+="<span style=\"color:var(--faint);font-size:12px\">已报废</span>";
@@ -932,7 +934,7 @@ async function showDirectTake(id){
 async function directTake(id){
   try{await apiPost("/api/actions/take",{asset_id:id});toast("已领用");closeModal();renderAssetTable();}catch(e){toast(e.message,"err");}
 }
-async function directDelAsset(id){if(!confirm("直接删除该设备？"))return;try{await apiPost("/api/requests/"+id,{action:"direct_delete"});toast("已删除");renderAssetTable();}catch(e){toast(e.message,"err");}}
+async function directDelAsset(id){if(!confirm("直接删除该设备？"))return;try{await apiPost("/api/actions/delete",{asset_id:id});toast("已删除");renderAssetTable();}catch(e){toast(e.message,"err");}}
 
 // ===== 主管：领用记录 =====
 async function renderUses(){
@@ -1053,11 +1055,13 @@ async function addField(){
 async function renderMembers(){
   var role=STATE.user.role;
   if(role==="supervisor"){
-    var h="<div class=\"page-title\">组长账号</div><div class=\"page-desc\">组长可管理自己组的员工和设备</div>";
-    h+="<div class=\"mb\"><button class=\"btn btn-primary\" onclick=\"showAddLeader()\">＋ 添加组长</button></div>";
-    h+="<div class=\"card\"><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th>组长</th><th>账号</th><th>组员数</th><th>操作</th></tr></thead><tbody id=\"memberTableBody\"></tbody></table></div></div>";
+    var h="<div class=\"page-title\">账号管理</div><div class=\"page-desc\">管理组长账号和直属员工账号</div>";
+    h+="<div class=\"mb\"><button class=\"btn btn-primary\" onclick=\"showAddLeader()\">＋ 添加组长</button> <button class=\"btn btn-primary\" onclick=\"showAddMember()\">＋ 添加员工</button></div>";
+    h+="<div class=\"card\"><div class=\"c-head\"><h3>组长账号</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th>组长</th><th>账号</th><th>组员数</th><th>操作</th></tr></thead><tbody id=\"leaderTableBody\"></tbody></table></div></div>";
+    h+="<div class=\"card\"><div class=\"c-head\"><h3>直属员工</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th>姓名</th><th>账号</th><th>创建时间</th><th>操作</th></tr></thead><tbody id=\"directMemberBody\"></tbody></table></div></div>";
     document.getElementById("content").innerHTML=h;
     renderLeaderTable();
+    renderDirectMembers();
   }else{
     var h2="<div class=\"page-title\">员工账号</div><div class=\"page-desc\">添加和管理本组员工账号</div>";
     h2+="<div class=\"mb\"><button class=\"btn btn-primary\" onclick=\"showAddMember()\">＋ 添加员工</button></div>";
@@ -1071,10 +1075,20 @@ async function renderLeaderTable(){
   var data=await apiGet("/api/users");
   var h="";
   (data.users||[]).forEach(function(l){
+    if(l.role!=="leader")return;
     h+="<tr><td><b>"+esc(l.name)+"</b></td><td>"+esc(l.username)+"</td><td class=\"num\">"+(l.members?l.members.length:0)+"</td><td style=\"white-space:nowrap\"><button class=\"btn btn-sm btn-ghost\" onclick=\"showLeaderMembers('"+l.id+"','"+esc(l.name)+"')\">查看组员</button> <button class=\"btn btn-sm btn-danger\" onclick=\"delMember('"+l.id+"')\">删除</button></td></tr>";
   });
   if(!h)h="<tr><td colspan=\"4\" class=\"empty\">暂无组长，点击右上角添加</td></tr>";
-  document.getElementById("memberTableBody").innerHTML=h;
+  document.getElementById("leaderTableBody").innerHTML=h;
+}
+async function renderDirectMembers(){
+  var data=await apiGet("/api/users");
+  var h="";
+  (data.users||[]).filter(function(m){return m.role==="member";}).forEach(function(m){
+    h+="<tr><td><b>"+esc(m.name)+"</b></td><td>"+esc(m.username)+"</td><td class=\"num\">"+esc(m.created)+"</td><td><button class=\"btn btn-sm btn-danger\" onclick=\"delMember('"+m.id+"')\">删除</button></td></tr>";
+  });
+  if(!h)h="<tr><td colspan=\"4\" class=\"empty\">暂无直属员工，点击右上角添加</td></tr>";
+  document.getElementById("directMemberBody").innerHTML=h;
 }
 async function showLeaderMembers(id,name){
   var data=await apiGet("/api/users");
@@ -1095,7 +1109,7 @@ async function renderMemberTable(){
   if(!h)h="<tr><td colspan=\"4\" class=\"empty\">暂无员工，点击右上角添加</td></tr>";
   document.getElementById("memberTableBody").innerHTML=h;
 }
-async function delMember(id){if(!confirm("删除该员工账号？"))return;try{await apiDel("/api/users/"+id);toast("已删除");renderMemberTable();}catch(e){toast(e.message,"err");}}
+async function delMember(id){if(!confirm("删除该账号？"))return;try{await apiDel("/api/users/"+id);toast("已删除");if(STATE.user.role==="supervisor"){renderLeaderTable();renderDirectMembers();}else{renderMemberTable();}}catch(e){toast(e.message,"err");}}
 function showAddMember(){
   showModal("<h3>添加员工</h3>"
     +"<div class=\"field\"><label>姓名</label><input id=\"m_name\" placeholder=\"如：小李\"></div>"
@@ -1127,7 +1141,8 @@ async function addMember(){
   if(!name||!user){document.getElementById("m_err").textContent="请填写姓名和账号";return;}
   try{
     await apiPost("/api/users",{name:name,username:user,password:pwd});
-    toast("添加成功：账号 "+user+" / 密码 "+(pwd||"123456"));closeModal();renderMemberTable();
+    toast("添加成功：账号 "+user+" / 密码 "+(pwd||"123456"));closeModal();
+    if(STATE.user.role==="supervisor"){renderLeaderTable();renderDirectMembers();}else{renderMemberTable();}
   }catch(e){document.getElementById("m_err").textContent=e.message;}
 }
 
