@@ -793,7 +793,7 @@ function postTransfer(tk,b){
   if(to.role!=="member")return[400,{error:"只能转让给员工"}];
   if(!sameGroup(u,to))return[400,{error:"只能转让给同组的员工"}];
   if((D.transfers||[]).find(function(t){return t.asset_id===a.id&&t.status==="pending";}))return[400,{error:"该手机已有待确认的转让"}];
-  D.transfers=(D.transfers||[]).concat([{id:uid(),asset_id:a.id,asset_name:assetName(a),from_id:u.id,from_name:u.name,to_id:to.id,to_name:to.name,note:b.note||"",status:"pending",created:nowStr(),handled_at:"",handled_note:""}]);
+  D.transfers=(D.transfers||[]).concat([{id:uid(),asset_id:a.id,asset_name:assetName(a),from_id:u.id,from_name:u.name,to_id:to.id,to_name:to.name,note:b.note||"",status:"pending",created:nowStr(),handled_at:"",handled_note:"",seen:false}]);
   sv();return[200,{ok:true}];
 }
 function getTransfers(tk){
@@ -805,6 +805,23 @@ function getTransfers(tk){
     list=list.filter(function(t){return inScope(u,t.from_id)||inScope(u,t.to_id);});
   }
   return[200,{transfers:list}];
+}
+// v12.9：上级未读转让数（主管全部/组长自己组）
+function getTransfersUnseen(tk){
+  var u=verify(tk);if(!u)return[401,{error:"未登录"}];
+  var list=(D.transfers||[]).filter(function(t){return !t.seen;});
+  if(u.role==="leader")list=list.filter(function(t){return inScope(u,t.from_id)||inScope(u,t.to_id);});
+  return[200,{count:u.role==="member"?0:list.length}];
+}
+// v12.9：上级打开领用记录后标记已读
+function markTransfersSeen(tk){
+  var u=verify(tk);if(!u)return[401,{error:"未登录"}];
+  if(u.role==="supervisor"){
+    (D.transfers||[]).forEach(function(t){t.seen=true;});
+  }else if(u.role==="leader"){
+    (D.transfers||[]).forEach(function(t){if(inScope(u,t.from_id)||inScope(u,t.to_id))t.seen=true;});
+  }
+  sv();return[200,{ok:true}];
 }
 function doTransferAct(tk,id,b){
   var u=verify(tk);if(!u)return[401,{error:"未登录"}];
@@ -960,6 +977,8 @@ function route(method,path,tk,body){
   if(path==="/api/warehouse"&&method==="GET")return getWarehouse(tk);
   if(path==="/api/actions/assign"&&method==="POST")return batchAssign(tk,body);
   if(path==="/api/transfers"&&method==="GET")return getTransfers(tk);
+  if(path==="/api/transfers/unseen"&&method==="GET")return getTransfersUnseen(tk);
+  if(path==="/api/transfers/seen"&&method==="POST")return markTransfersSeen(tk);
   if(path==="/api/transfers"&&method==="POST")return postTransfer(tk,body);
   if(pp[1]==="api"&&pp[2]==="transfers"&&pp.length===4&&method==="POST")return doTransferAct(tk,pp[3],body);
   if(path==="/api/requests/batch_take"&&method==="POST")return batchTake(tk,body);
@@ -1107,7 +1126,14 @@ async function refreshBadges(){
     var pending=data.stats.pendingReqs||0;
     var myP=data.stats.myPending||0;
     var set=function(id,n){var el=document.getElementById("badge_"+id);if(el){if(n>0){el.style.display="flex";el.textContent=n;}else{el.style.display="none";}}};
-    if(STATE.user.role==="supervisor"){set("review",pending);}
+    if(STATE.user.role==="supervisor"||STATE.user.role==="leader"){
+      set("review",pending);
+      // v12.9：领用记录角标 = 未读转让数（上级收到通知，不用审核）
+      try{
+        var un=await apiGet("/api/transfers/unseen");
+        set("uses",un.count||0);
+      }catch(e){set("uses",0);}
+    }
     else{
       // v12.8：我的申请角标 = 我的申请 + 待我确认的转让
       try{
@@ -1443,15 +1469,17 @@ async function directDelAsset(id){if(!confirm("直接删除该设备？"))return
 
 // ===== 主管：领用记录 =====
 async function renderUses(){
-  var h="<div class=\"page-title\">领用记录</div><div class=\"page-desc\">全部设备的领用与归还情况</div>";
+  var h="<div class=\"page-title\">领用记录</div><div class=\"page-desc\">全部设备的领用与归还情况，含员工间转让记录</div>";
   h+="<div class=\"filter-bar\"><input id=\"useSearch\" placeholder=\"搜索设备/领用人\" oninput=\"renderUseTable()\"></div>";
   h+="<div class=\"card\"><div class=\"c-head\"><h3>领用记录</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th>设备</th><th>领用人</th><th>领用时间</th><th>归还时间</th><th>状态</th><th>操作</th></tr></thead><tbody id=\"useTableBody\"></tbody></table></div></div>";
-  h+="<div class=\"card\"><div class=\"c-head\"><h3>转让记录</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th>设备</th><th>转出人</th><th>接收人</th><th>状态</th><th>发起时间</th><th>处理时间</th></tr></thead><tbody id=\"tfTableBody\"></tbody></table></div></div>";
+  h+="<div class=\"card\"><div class=\"c-head\"><h3>转让记录<span style=\"font-size:12px;color:var(--faint);font-weight:400\">（上级仅查看，无需审核）</span></h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th>转让详情</th><th>状态</th><th>发起时间</th><th>处理时间</th></tr></thead><tbody id=\"tfTableBody\"></tbody></table></div></div>";
   document.getElementById("content").innerHTML=h;
+  // v12.9：打开即标记已读（上级收到通知后查看）
+  try{await apiPost("/api/transfers/seen");refreshBadges();}catch(e){}
   renderUseTable();
   renderTfTable();
 }
-// v12.8：主管查看转让记录（审计留痕）
+// v12.8：主管查看转让记录（审计留痕，含设备编号+日期）
 async function renderTfTable(){
   try{
     var data=await apiGet("/api/transfers");
@@ -1459,9 +1487,10 @@ async function renderTfTable(){
     var stTag={pending:["待确认","tag-orange"],approved:["已转让","tag-green"],rejected:["已拒绝","tag-red"],cancelled:["已撤销","tag-gray"]};
     (data.transfers||[]).forEach(function(t){
       var st=stTag[t.status]||["",""];
-      h+="<tr><td><b>"+esc(t.asset_name)+"</b></td><td>"+esc(t.from_name)+"</td><td>"+esc(t.to_name)+"</td><td><span class=\"tag "+st[1]+"\">"+st[0]+"</span></td><td class=\"num\">"+esc(t.created)+"</td><td class=\"num\">"+(t.handled_at?esc(t.handled_at):"—")+"</td></tr>";
+      // 转让详情：谁把哪台设备（编号）转让给谁
+      h+="<tr><td><b>"+esc(t.from_name)+"</b> 转让 <b>"+esc(t.asset_name)+"</b> 给 <b>"+esc(t.to_name)+"</b>"+(t.note?"<br><span style=\"font-size:12px;color:var(--faint)\">备注："+esc(t.note)+"</span>":"")+"</td><td><span class=\"tag "+st[1]+"\">"+st[0]+"</span></td><td class=\"num\">"+esc(t.created)+"</td><td class=\"num\">"+(t.handled_at?esc(t.handled_at):"—")+"</td></tr>";
     });
-    if(!h)h="<tr><td colspan=\"6\" class=\"empty\">暂无转让记录</td></tr>";
+    if(!h)h="<tr><td colspan=\"4\" class=\"empty\">暂无转让记录</td></tr>";
     document.getElementById("tfTableBody").innerHTML=h;
   }catch(e){}
 }
