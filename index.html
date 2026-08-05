@@ -399,6 +399,16 @@ function getAssets(tk){
 function getSims(tk){
   var u=verify(tk);if(!u)return[401,{error:"未登录"}];
   var list=D.simcards||[];
+  // v12.10：电话卡按组隔离——组长只看自己组的，员工只看本组（组长+组员）
+  if(u.role==="leader"){
+    list=list.filter(function(s){return inScope(u,s.created_by);});
+  }else if(u.role==="member"){
+    var simLeader=D.users.find(function(x){return x.id===u.parent_id;});
+    list=list.filter(function(s){
+      if(s.created_by===u.id)return true;
+      return simLeader?inScope(simLeader,s.created_by):false;
+    });
+  }
   list=list.map(function(s){
     var a=s.asset_id?D.assets.find(function(x){return x.id===s.asset_id;}):null;
     return Object.assign({},s,{asset_sn:(a&&a.data&&a.data.sn)||"",asset_model:(a&&a.data&&a.data.model)||"",asset_name:a?assetName(a):""});
