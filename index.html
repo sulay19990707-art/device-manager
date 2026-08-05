@@ -1061,7 +1061,7 @@ async function renderAssets(){
   h+="<div class=\"kpi-row\">"+kpiCard("设备总数","#0a84ff",st.total)+kpiCard("在库","#34c759",st.available)+kpiCard("已领用","#7c5cff",st.inUse)+kpiCard("维修中","#ff9500",st.repairing)+"</div>";
   h+="<div class=\"filter-bar\"><select id=\"astFilter\" onchange=\"renderAssetTable()\"><option value=\"\">全部状态</option><option value=\"available\">在库</option><option value=\"in_use\">已领用</option><option value=\"repairing\">维修中</option><option value=\"scrapped\">已报废</option></select><input id=\"astSearch\" placeholder=\"搜索名称/编号/登记人\" oninput=\"renderAssetTable()\"><button class=\"btn btn-primary\" onclick=\"showAddAsset()\">＋ 登记设备</button></div>";
   h+="<div class=\"filter-bar\" style=\"flex-wrap:wrap;gap:6px\" id=\"personBar\">加载人员…</div>";
-  h+="<div class=\"card\"><div class=\"c-head\"><h3>设备列表</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th>设备</th><th>登记人</th><th>使用人</th><th>状态</th><th>登记时间</th><th>操作</th></tr></thead><tbody id=\"assetTableBody\"></tbody></table></div></div>";
+  h+="<div class=\"card\"><div class=\"c-head\"><h3>设备列表</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th>设备</th><th>手机型号</th><th>手机编号</th><th>手机号</th><th>登记人</th><th>使用人</th><th>状态</th><th>登记时间</th><th>操作</th></tr></thead><tbody id=\"assetTableBody\"></tbody></table></div></div>";
   document.getElementById("content").innerHTML=h;
   renderPersonBar();
   renderAssetTable();
@@ -1100,11 +1100,13 @@ async function renderAssetTable(){
   var list=data.assets.filter(function(a){return (!f||a.status===f)&&(!ASSET_FILTER||a.created_by===ASSET_FILTER)&&(!kw||(assetName(a)+" "+(a.data&&a.data.sn||"")+" "+(a.data&&a.data.model||"")+" "+(a.data&&a.data.phone||"")+" "+(a.data&&a.data.nickname||"")+" "+(a.data&&a.data.douyin_id||"")+" "+a.created_by_name).indexOf(kw)>=0);});
   var h="";
   list.forEach(function(a){
+    var d=a.data||{};
     var code=a.data&&a.data.code?"<span style=\"color:var(--faint);font-size:12px\">"+esc(a.data.code)+"</span>":"";
     var myUse=useData.uses.find(function(x){return x.asset_id===a.id&&!x.return_time;});
-    // v12.3：在库设备显示登记人（谁录的谁在用），在用显示实际使用人
+    // 使用人：在用/已领用显示实际使用人；在库设备显示登记人（谁录的谁在用，等退回仓库后为在库）
     var showUser=myUse?myUse.user_name:(a.status==="available"?a.created_by_name:"");
-    h+="<tr><td><b>"+esc(assetName(a))+"</b> "+code+"<br><span style=\"color:var(--faint);font-size:12px\">"+assetFullHtml(a,fieldsData.fields)+"</span></td><td><button class=\"link-btn\" onclick=\"filterByUser(this)\" data-v=\""+a.created_by+"\">"+esc(a.created_by_name)+"</button></td><td>"+(showUser?"<b>"+esc(showUser)+"</b>":"<span style=\"color:var(--faint)\">—</span>")+"</td><td>"+assetTag(a.status)+"</td><td class=\"num\">"+esc(a.created)+"</td><td>";
+    // v12.4：设备/型号/编号/手机号独立列
+    h+="<tr><td><b>"+esc(d.type||"—")+"</b></td><td>"+esc(d.model||"—")+"</td><td>"+esc(d.sn||"—")+"</td><td>"+esc(d.phone||"—")+"</td><td><button class=\"link-btn\" onclick=\"filterByUser(this)\" data-v=\""+a.created_by+"\">"+esc(a.created_by_name)+"</button></td><td>"+(showUser?"<b>"+esc(showUser)+"</b>":"<span style=\"color:var(--faint)\">—</span>")+"</td><td>"+assetTag(a.status)+"</td><td class=\"num\">"+esc(a.created)+"</td><td>";
     if(STATE.user.role!=="member")h+="<button class=\"btn btn-sm btn-ghost\" onclick=\"openEditAsset('"+a.id+"',0)\" style=\"margin-right:6px\">编辑</button>";
     if(a.status==="available"){
       h+="<button class=\"btn btn-sm btn-green\" onclick=\"showDirectTake('"+a.id+"')\">直接领用</button> ";
@@ -1122,7 +1124,7 @@ async function renderAssetTable(){
     }
     h+="</td></tr>";
   });
-  if(!h)h="<tr><td colspan=\"5\" class=\"empty\">暂无设备</td></tr>";
+  if(!h)h="<tr><td colspan=\"9\" class=\"empty\">暂无设备</td></tr>";
   document.getElementById("assetTableBody").innerHTML=h;
 }
 function showAddAsset(){
@@ -1639,7 +1641,7 @@ async function renderWarehouse(){
   h+="</select><select id=\"whStatus\" onchange=\"renderWarehouseTable()\"><option value=\"\">全部状态</option><option value=\"available\">在库</option><option value=\"in_use\">已领用</option><option value=\"repairing\">维修中</option></select></div>";
   h+="<div class=\"filter-bar\" style=\"flex-wrap:wrap\" id=\"whModelBar\">加载型号…</div>";
   h+="<div class=\"mb\" style=\"display:flex;gap:10px;align-items:center\"><button class=\"btn btn-primary\" id=\"whTakeBtn\" onclick=\"whBatchTake()\">📥 申请领用所选 (0)</button><span id=\"whSelInfo\" style=\"font-size:13px;color:var(--sub)\"></span></div>";
-  h+="<div class=\"card\"><div class=\"c-head\"><h3>手机列表</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th style=\"width:36px\"><input type=\"checkbox\" id=\"whAll\" onchange=\"whToggleAll(this)\"></th><th>设备</th><th>状态</th><th>使用人</th><th>登记人</th><th>登记时间</th></tr></thead><tbody id=\"whBody\"></tbody></table></div></div>";
+  h+="<div class=\"card\"><div class=\"c-head\"><h3>手机列表</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th style=\"width:36px\"><input type=\"checkbox\" id=\"whAll\" onchange=\"whToggleAll(this)\"></th><th>设备</th><th>手机型号</th><th>手机编号</th><th>手机号</th><th>状态</th><th>使用人</th><th>登记人</th><th>登记时间</th></tr></thead><tbody id=\"whBody\"></tbody></table></div></div>";
   document.getElementById("content").innerHTML=h;
   renderWhModelBar();
   renderWarehouseTable();
@@ -1674,11 +1676,12 @@ async function renderWarehouseTable(){
     if(kw&&(assetName(a)+" "+(d.model||"")+" "+(d.phone||"")+" "+(d.sn||"")+" "+a.created_by_name).indexOf(kw)<0)return;
     var canTake=a.status==="available";
     var myUse=useData.uses.find(function(x){return x.asset_id===a.id&&!x.return_time;});
-    // v12.3：在库设备显示登记人（谁录的谁在用），在用显示实际使用人
+    // 使用人：在用/已领用显示实际使用人；在库显示登记人（退回设备也标归属）
     var showUser=myUse?myUse.user_name:(a.status==="available"?a.created_by_name:"");
-    h+="<tr><td><input type=\"checkbox\" class=\"wh-chk\" value=\""+a.id+"\" "+(canTake?"":"disabled")+" onchange=\"whUpdateSel()\"></td><td><b>"+esc(assetName(a))+"</b><br><span style=\"color:var(--faint);font-size:12px\">"+assetFullHtml(a,fieldsData.fields)+"</span></td><td>"+assetTag(a.status)+(canTake?"":"<br><span style=\"font-size:11px;color:var(--faint)\">不可领用</span>")+"</td><td>"+(showUser?"<b>"+esc(showUser)+"</b>":"<span style=\"color:var(--faint)\">—</span>")+"</td><td>"+esc(a.created_by_name)+"</td><td class=\"num\">"+esc(a.created)+"</td></tr>";
+    // v12.4：设备/型号/编号/手机号独立列
+    h+="<tr><td><input type=\"checkbox\" class=\"wh-chk\" value=\""+a.id+"\" "+(canTake?"":"disabled")+" onchange=\"whUpdateSel()\"></td><td><b>"+esc(d.type||"—")+"</b></td><td>"+esc(d.model||"—")+"</td><td>"+esc(d.sn||"—")+"</td><td>"+esc(d.phone||"—")+"</td><td>"+assetTag(a.status)+(canTake?"":"<br><span style=\"font-size:11px;color:var(--faint)\">不可领用</span>")+"</td><td>"+(showUser?"<b>"+esc(showUser)+"</b>":"<span style=\"color:var(--faint)\">—</span>")+"</td><td>"+esc(a.created_by_name)+"</td><td class=\"num\">"+esc(a.created)+"</td></tr>";
   });
-  if(!h)h="<tr><td colspan=\"6\" class=\"empty\">暂无符合条件的手机</td></tr>";
+  if(!h)h="<tr><td colspan=\"9\" class=\"empty\">暂无符合条件的手机</td></tr>";
   document.getElementById("whBody").innerHTML=h;
   whUpdateSel();
 }
