@@ -441,7 +441,7 @@ function getSims(tk){
 }
 function postSim(tk,b){
   var u=verify(tk);if(!u)return[401,{error:"未登录"}];
-  if(u.role==="member"&&u.role!=="member")return[403,{error:"无权限"}];
+  // v13.6：员工可登记电话卡（跟登记手机一样的原理，登记即本人使用）
   if(!b.data||!b.data.sim_no)return[400,{error:"请填写卡号"}];
   var d={};for(var k in b.data)d[k]=b.data[k];
   if((D.simcards||[]).find(function(s){return s.data&&s.data.sim_no===d.sim_no;}))return[400,{error:"卡号已存在，不能重复"}];
@@ -450,9 +450,10 @@ function postSim(tk,b){
 }
 function updateSim(tk,b){
   var u=verify(tk);if(!u)return[401,{error:"未登录"}];
-  if(u.role==="member")return[403,{error:"无权限"}];
   var s=(D.simcards||[]).find(function(x){return x.id===b.id;});
   if(!s)return[404,{error:"卡不存在"}];
+  // v13.6：员工只能编辑自己登记的电话卡
+  if(u.role==="member"&&s.created_by!==u.id)return[403,{error:"只能编辑自己登记的电话卡"}];
   if(b.data){for(var k in b.data)s.data[k]=b.data[k];}
   if(b.asset_id!==undefined)s.asset_id=b.asset_id;
   if(b.asset_id){var a=D.assets.find(function(x){return x.id===b.asset_id;});if(!a)return[400,{error:"手机不存在"}];}
@@ -460,7 +461,10 @@ function updateSim(tk,b){
 }
 function delSim(tk,id){
   var u=verify(tk);if(!u)return[401,{error:"未登录"}];
-  if(u.role==="member")return[403,{error:"无权限"}];
+  var s=(D.simcards||[]).find(function(x){return x.id===id;});
+  if(!s)return[404,{error:"卡不存在"}];
+  // v13.6：员工只能删除自己登记的电话卡
+  if(u.role==="member"&&s.created_by!==u.id)return[403,{error:"只能删除自己登记的电话卡"}];
   D.simcards=(D.simcards||[]).filter(function(x){return x.id!==id;});
   sv();return[200,{ok:true}];
 }
@@ -1223,6 +1227,7 @@ function renderSidebar(){
   }else{
     items=[
       {id:"mydev",icon:"📱",label:"我的设备"},
+      {id:"sims",icon:"📇",label:"电话卡台账"},
       {id:"warehouse",icon:"🏬",label:"仓库手机"},
       {id:"mymain",icon:"📨",label:"我的申请"},
       {id:"stats",icon:"📊",label:"数据统计"}
@@ -2021,7 +2026,9 @@ async function renderSimTable(){
       extraTds+="<td>"+(d[f.id]?esc(d[f.id]):"<span style=\"color:var(--faint)\">—</span>")+"</td>";
     });
     h+="<tr><td><b>"+esc(d.sim_no||"—")+"</b></td><td>"+esc(d.sim_type||"—")+"</td>"+extraTds+"<td>"+bindInfo+"</td><td>"+esc(s.created_by_name||"—")+"</td><td class=\"num\">"+esc(s.created)+"</td><td style=\"white-space:nowrap\">";
-    if(role!=="member")h+="<button class=\"btn btn-sm btn-ghost\" onclick=\"showEditSim('"+s.id+"')\">编辑</button> <button class=\"btn btn-sm btn-danger\" onclick=\"delSimF('"+s.id+"')\">删除</button>";
+    // v13.6：员工可编辑/删除自己登记的电话卡（跟登记手机一样的原理）
+    var canManage=role!=="member"||s.created_by===STATE.user.id;
+    if(canManage)h+="<button class=\"btn btn-sm btn-ghost\" onclick=\"showEditSim('"+s.id+"')\">编辑</button> <button class=\"btn btn-sm btn-danger\" onclick=\"delSimF('"+s.id+"')\">删除</button>";
     h+="</td></tr>";
   });
   var extraCnt=(data.simfields||[]).filter(function(f){return !(f.id==="sim_type"&&f.label==="运营商");}).length;
