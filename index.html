@@ -2502,8 +2502,9 @@ async function renderSimPersonBar(){
     var data=await apiGet("/api/sims");
     var usersData=await apiGet("/api/users");
     var sims=data.sims||[];
+    // v13.13：按使用人（user_id，谁领用谁在用）计数，未分配的不计人
     var cntByUser={};
-    sims.forEach(function(s){var c=s.created_by;cntByUser[c]=(cntByUser[c]||0)+1;});
+    sims.forEach(function(s){var c=s.user_id;if(c)cntByUser[c]=(cntByUser[c]||0)+1;});
     var people=[{id:"",name:"👥 全部"}];
     (usersData.users||[]).forEach(function(u){
       if(u.role==="leader"){
@@ -2544,7 +2545,8 @@ async function renderSimTable(){
     // v13.6：员工可编辑/删除自己登记的电话卡；v13.12：自己领用的卡也可编辑备注（删除仍限自己登记）
     var canManage=role!=="member"||s.created_by===STATE.user.id||s.user_id===STATE.user.id;
     var canDelete=role!=="member"||s.created_by===STATE.user.id;
-    if(SIM_FILTER_USER&&s.created_by!==SIM_FILTER_USER)return;
+    // v13.13：按使用人（user_id）过滤，与按人查看计数一致
+    if(SIM_FILTER_USER&&s.user_id!==SIM_FILTER_USER)return;
     if(SIM_STATUS_FILTER&&d.sim_status!==SIM_STATUS_FILTER)return;
     if(kw&&((d.sim_no||"")+" "+(d.sim_type||"")+" "+(s.asset_sn||"")+" "+(s.asset_name||"")).indexOf(kw)<0)return;
     var bindInfo=s.asset_id?(s.asset_sn?("📱 "+esc(s.asset_name)+" 编号:"+esc(s.asset_sn)):("📱 "+esc(s.asset_name))):"<span style=\"color:var(--faint)\">未绑定</span>";
