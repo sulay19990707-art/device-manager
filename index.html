@@ -62,7 +62,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue"
 .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);margin-bottom:18px;overflow:hidden}
 .card .c-head{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--line);flex-wrap:wrap;gap:8px}
 .card .c-head h3{font-size:15px;font-weight:600;color:var(--ink)}
-.card .c-body{padding:16px 20px}
+.card .c-body{padding:16px 20px;overflow-x:auto;-webkit-overflow-scrolling:touch}
 table{width:100%;border-collapse:collapse;font-size:13px}
 th{text-align:left;padding:10px 14px;background:#f7f9fc;color:var(--sub);font-weight:600;white-space:nowrap;border-bottom:1px solid var(--line)}
 td{padding:11px 14px;border-bottom:1px solid var(--line);vertical-align:middle}
@@ -129,11 +129,20 @@ tr:hover td{background:#fafbfd}
 
 /* 响应式 */
 @media(max-width:900px){
-  .sidebar{width:64px}
+  .sidebar{width:60px}
   .sb-logo span,.nav-item span:not(.nav-badge){display:none}
   .nav-item{justify-content:center;padding:12px 0}
   .sb-user .u-info,.sb-user .logout{display:none}
-  .main{padding:16px}
+  .main{padding:12px}
+  /* v13.5：手机表格横向滚动看全列（表格保持内容宽度，容器内滑动） */
+  .card table{min-width:max-content;width:100%}
+  .card table th,.card table td{white-space:nowrap;padding:7px 9px}
+  table{font-size:12px}
+  .kpi-row{flex-wrap:wrap}
+  .m-btns{flex-wrap:wrap}
+  .filter-bar input{width:100%;max-width:240px}
+  .chip{padding:7px 12px;font-size:12px}
+  .modal{padding:20px 16px}
 }
 </style>
 </head>
