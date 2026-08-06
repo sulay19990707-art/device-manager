@@ -191,23 +191,32 @@ var DEFAULT_FIELDS=[
   {id:"card",label:"手机卡类型",type:"select",options:["移动","联通","电信","其他"],required:false},
   {id:"sn",label:"手机编号",type:"input",placeholder:"如：IMEI/SN（不可重复）",required:true},
   {id:"platform",label:"平台",type:"select",options:["抖音","快手","小红书"],required:false},
-  {id:"nickname",label:"抖音昵称",type:"input",placeholder:"抖音昵称",required:false},
-  {id:"douyin_id",label:"抖音ID",type:"input",placeholder:"如：dy123456",required:false},
+  {id:"nickname",label:"昵称",type:"input",placeholder:"对应平台昵称",required:false},
+  {id:"douyin_id",label:"ID",type:"input",placeholder:"如：dy123456",required:false},
   {id:"note",label:"备注",type:"input",placeholder:"其他说明",required:false}
 ];
 var REMOVE_LABELS=["品牌","颜色","设备编号","设备型号"];
 function mergeFields(d){
   if(!d||!d.fields)return;
+  // v13.4：按 id 去重（曾出现 platform 字段重复导致多列；保留第一个）
+  var seen={};
+  d.fields=d.fields.filter(function(f){if(!f||!f.id)return true;if(seen[f.id])return false;seen[f.id]=true;return true;});
   // v13.3：平台列改名+选项（抖音/快手/小红书）；是否有抖音号改"是/否"快捷选择
   var pf=d.fields.find(function(x){return x.label==="抖音平台";});
   if(pf){pf.label="平台";pf.options=["抖音","快手","小红书"];}
   var yf=d.fields.find(function(x){return x.label==="是否有抖音号"||x.label==="是否有账号";});
-  if(yf){yf.type="select";yf.options=["是","否"];}
+  if(yf){yf.label="是否有抖音号";yf.type="select";yf.options=["是","否"];}
+  // v13.4：昵称/ID 列名通用化（选哪个平台，这两列就是那个平台的账号）
+  var nf=d.fields.find(function(x){return x.label==="抖音昵称";});
+  if(nf)nf.label="昵称";
+  var idf=d.fields.find(function(x){return x.label==="抖音ID";});
+  if(idf)idf.label="ID";
   d.fields=d.fields.filter(function(f){return REMOVE_LABELS.indexOf(f.label)<0;});
   var mf=d.fields.find(function(x){return x.label==="手机型号"&&x.type==="input";});
   if(mf){mf.type="select";mf.options=["iPhone 13","iPhone 14","iPhone 15","Mate60","Mate60 Pro","Redmi K70","其他"];mf.placeholder="";}
   DEFAULT_FIELDS.forEach(function(f){
-    var ex=d.fields.find(function(x){return x.label===f.label;});
+    // v13.4：按 id 匹配（label 曾重复导致重复 push）
+    var ex=d.fields.find(function(x){return x.id===f.id;});
     if(ex){
       if(f.required!==undefined)ex.required=f.required;
       if(f.placeholder)ex.placeholder=f.placeholder;
@@ -1410,7 +1419,7 @@ async function renderAssetTable(){
     // v13.2：使用人仅显示实际在用者；退回仓库后在库设备使用人为空
     var showUser=myUse?myUse.user_name:"";
     // v12.6：动态字段列（v13.1：抖音ID/昵称对员工隔离——只显示自己使用中的手机，别人的隐藏）
-    // v13.3：动态列双击可内联编辑（平台/是否有抖音号快捷选择、备注等直接输入）
+    // v13.4：平台/是否有抖音号 常驻快捷选择（点选即存）；其他列单击编辑
     var extraTds="";
     var isMine=STATE.user.role==="member"&&myUse&&myUse.user_id===STATE.user.id;
     (fieldsData.fields||[]).forEach(function(f){
@@ -1418,10 +1427,20 @@ async function renderAssetTable(){
       var hidden=(f.id==="douyin_id"||f.id==="nickname")&&STATE.user.role==="member"&&!isMine;
       if(hidden){
         extraTds+="<td><span style=\"color:var(--faint)\">—</span></td>";
+        return;
+      }
+      var fv=d[f.id];
+      var isQuick=(f.type==="select"&&(f.label==="平台"||f.label==="是否有抖音号"));
+      if(isQuick&&f.options){
+        // 常驻快捷 chips，点选即保存
+        var chips="";
+        (f.options||[]).forEach(function(o){
+          chips+="<span class=\"chip"+(fv===o?" on":"")+"\" data-v=\""+esc(o)+"\" onclick=\"inlineSave('"+a.id+"','"+f.id+"','"+esc(o)+"')\" style=\"padding:2px 8px;font-size:11px;margin:1px 2px\">"+esc(o)+"</span>";
+        });
+        extraTds+="<td style=\"white-space:nowrap\">"+chips+"</td>";
       }else{
-        var fv=d[f.id];
         var ft=(f.type==="select"?"select":"input");
-        extraTds+="<td title=\"双击编辑\" ondblclick=\"inlineEdit('"+a.id+"','"+f.id+"','"+ft+"',this)\" style=\"cursor:pointer\">"+(fv?esc(fv):"<span style=\"color:var(--faint)\">—</span>")+"</td>";
+        extraTds+="<td title=\"单击编辑\" onclick=\"inlineEdit('"+a.id+"','"+f.id+"','"+ft+"',this)\" style=\"cursor:pointer\">"+(fv?esc(fv):"<span style=\"color:var(--faint)\">—</span>")+"</td>";
       }
     });
     // v12.4：设备/型号/编号/手机号独立列
@@ -1464,11 +1483,11 @@ async function inlineEdit(assetId, fieldId, type, td){
     if(type==="select"&&f&&f.options&&f.options.length){
       var chips="";
       (f.options||[]).forEach(function(o){
-        chips+="<span class=\"chip"+(cur===o?" on":"")+"\" data-v=\""+esc(o)+"\" onclick=\"inlineSave('"+assetId+"','"+fieldId+"','"+esc(o)+"')\">"+esc(o)+"</span>";
+        chips+="<span class=\"chip"+(cur===o?" on":"")+"\" data-v=\""+esc(o)+"\" onclick=\"event.stopPropagation();inlineSave('"+assetId+"','"+fieldId+"','"+esc(o)+"')\">"+esc(o)+"</span>";
       });
       html="<div class=\"chip-row\" style=\"white-space:nowrap\">"+chips+"</div>";
     }else{
-      html="<input value=\""+esc(cur)+"\" style=\"width:120px;box-sizing:border-box;padding:4px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:13px\" onkeydown=\"if(event.key==='Enter')inlineSaveInput('"+assetId+"','"+fieldId+"',this.value)\" onblur=\"renderAssetTable()\">";
+      html="<input value=\""+esc(cur)+"\" onclick=\"event.stopPropagation()\" style=\"width:140px;box-sizing:border-box;padding:4px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:13px\" onkeydown=\"if(event.key==='Enter')inlineSaveInput('"+assetId+"','"+fieldId+"',this.value)\" onblur=\"renderAssetTable()\">";
     }
     td.innerHTML=html;
     var inp=td.querySelector("input");if(inp)inp.focus();
