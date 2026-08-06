@@ -88,7 +88,7 @@ tr:hover td{background:#fafbfd}
 .btn-ghost{background:#f1f3f6;color:var(--sub)}
 .btn-ghost:hover{background:#e7eaf0;color:var(--ink)}
 .btn-sm{padding:6px 12px;font-size:12px}
-.mb{margin-bottom:16px}
+.mb{margin-bottom:16px;display:flex;flex-wrap:wrap;gap:10px}
 .empty{text-align:center;padding:36px 0;color:var(--faint)}
 .filter-bar{display:flex;gap:10px;align-items:center;margin-bottom:16px;flex-wrap:wrap}
 .filter-bar select,.link-btn{background:none;border:none;color:var(--accent,#0a84ff);cursor:pointer;font-size:13px;padding:0;text-decoration:underline}
@@ -165,7 +165,7 @@ tr:hover td{background:#fafbfd}
     <div class="sb-logo"><span class="dot"></span><span>设备管理系统</span></div>
     <div class="sb-nav" id="sidebar"></div>
     <div class="sb-user">
-      <div class="av" id="userAv">主</div>
+      <div class="av" id="userAv" onclick="showUserPopup()" title="账号信息" style="cursor:pointer">主</div>
       <div class="u-info">
         <div class="u-name" id="userName">--</div>
         <div class="u-role" id="userRole">--</div>
@@ -314,9 +314,9 @@ function postLogin(b){
   var u=D.users.find(function(x){return x.username===(b.username||"").trim()&&x.password===((b.password||"").trim());});
   if(!u)return[400,{error:"账号或密码错误"}];
   var tk=ubtoa(JSON.stringify({id:u.id}))+"."+ubtoa("s1");
-  return[200,{token:tk,user:{id:u.id,name:u.name,role:u.role}}];
+  return[200,{token:tk,user:{id:u.id,name:u.name,role:u.role,username:u.username}}];
 }
-function getMe(tk){var u=verify(tk);if(!u)return[401,{error:"未登录"}];return[200,{user:{id:u.id,name:u.name,role:u.role}}];}
+function getMe(tk){var u=verify(tk);if(!u)return[401,{error:"未登录"}];return[200,{user:{id:u.id,name:u.name,role:u.role,username:u.username}}];}
 
 // ===== 员工账号（主管） =====
 function inScope(u,userId){
@@ -2670,6 +2670,17 @@ async function renderMyReq(){
 }
 
 // ===== 修改密码 =====
+// v13.5：手机端左下角头像点击 → 账号信息弹窗（桌面直接显示完整信息，无需弹窗）
+function showUserPopup(){
+  if(window.innerWidth>=900)return;
+  var u=STATE.user;if(!u)return;
+  var rn=ROLE_LABELS[u.role]||u.role;
+  showModal("<h3>我的账号</h3>"
+    +"<div style=\"text-align:center;padding:4px 0 16px\"><div style=\"width:56px;height:56px;border-radius:50%;background:var(--blue);color:#fff;display:flex;align-items:center;justify-content:center;font-size:24px;margin:0 auto 10px\">"+esc((u.name||u.username||"?")[0])+"</div>"
+    +"<div style=\"font-size:17px;font-weight:700\">"+esc(u.name)+"</div>"
+    +"<div style=\"font-size:13px;color:var(--sub);margin-top:4px\">账号："+esc(u.username)+" ｜ 角色："+esc(rn)+"</div></div>"
+    +"<div class=\"m-btns\" style=\"justify-content:center\"><button class=\"btn btn-ghost\" onclick=\"closeModal();showPwdModal()\">修改密码</button><button class=\"btn btn-danger\" onclick=\"closeModal();doLogout()\">退出登录</button></div>");
+}
 function showPwdModal(){
   showModal("<h3>修改密码</h3>"
     +"<div class=\"field\"><label>原密码</label><input id=\"pw_old\" type=\"password\"></div>"
