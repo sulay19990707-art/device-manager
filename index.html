@@ -274,6 +274,8 @@ function ensureSimData(){
   if(!D.shipments)D.shipments=[];
   // v13.8：权限开关配置兜底（主管/组长控制：员工才能编辑手机号/绑定手机）
   if(!D.settings)D.settings={allow_edit_phone:false,allow_edit_sim_bind:false};
+  // v13.12：退回原因选项（主管/组长自定义，退回申请时选择，审核后同步到设备/卡数据）
+  if(!D.return_opts||!D.return_opts.length)D.return_opts=["账号封禁","老号","没号","注销","其他"];
 }
 function ensureCloud(){if(!cloudPromise)cloudPromise=pullCloud().then(function(){cloudReady=true;ensureSimData();});return cloudPromise;}
 function sv(){svLocal();D_DIRTY=true;pushCloud().then(function(){setTimeout(function(){D_DIRTY=false;},3000);}).catch(function(){D_DIRTY=false;});}
@@ -423,6 +425,26 @@ function getAssets(tk){
   return[200,{assets:list.map(function(a){return Object.assign({},a);})}];
 }
 // ===== v13.8：权限开关（主管/组长控制：员工才能编辑手机号 / 绑定手机）=====
+// ===== v13.12：退回原因选项（主管/组长自定义）=====
+function getReturnOpts(tk){
+  var u=verify(tk);if(!u)return[401,{error:"未登录"}];
+  return[200,{opts:D.return_opts||[]}];
+}
+function addReturnOpt(tk,b){
+  var u=verify(tk);if(!u)return[401,{error:"未登录"}];
+  if(u.role!=="supervisor"&&u.role!=="leader")return[403,{error:"无权限"}];
+  var v=(b&&b.value||"").trim();
+  if(!v)return[400,{error:"请填写选项"}];
+  if((D.return_opts||[]).indexOf(v)>=0)return[400,{error:"选项已存在"}];
+  D.return_opts=(D.return_opts||[]).concat([v]);
+  sv();return[200,{ok:true,opts:D.return_opts}];
+}
+function delReturnOpt(tk,v){
+  var u=verify(tk);if(!u)return[401,{error:"未登录"}];
+  if(u.role!=="supervisor"&&u.role!=="leader")return[403,{error:"无权限"}];
+  D.return_opts=(D.return_opts||[]).filter(function(x){return x!==v;});
+  sv();return[200,{ok:true,opts:D.return_opts}];
+}
 function getSettings(tk){
   var u=verify(tk);if(!u)return[401,{error:"未登录"}];
   return[200,{settings:D.settings||{allow_edit_phone:false,allow_edit_sim_bind:false}}];
@@ -470,8 +492,8 @@ function updateSim(tk,b){
   var u=verify(tk);if(!u)return[401,{error:"未登录"}];
   var s=(D.simcards||[]).find(function(x){return x.id===b.id;});
   if(!s)return[404,{error:"卡不存在"}];
-  // v13.6：员工只能编辑自己登记的电话卡
-  if(u.role==="member"&&s.created_by!==u.id)return[403,{error:"只能编辑自己登记的电话卡"}];
+  // v13.6：员工只能编辑自己登记的电话卡；v13.12：放宽——自己领用中的卡也可改备注等普通字段
+  if(u.role==="member"&&s.created_by!==u.id&&s.user_id!==u.id)return[403,{error:"只能编辑自己登记或领用的电话卡"}];
   // v13.9：卡号唯一校验（编辑卡号时）
   if(b.data&&b.data.sim_no&&(D.simcards||[]).find(function(x){return x.id!==s.id&&x.data&&x.data.sim_no===b.data.sim_no;}))
     return[400,{error:"卡号已存在，不能重复"}];
@@ -609,7 +631,7 @@ function postRequest(tk,b){
       if(toU.id===u.id)return[400,{error:"不能转让给自己"}];
     }
     if(D.requests.find(function(x){return x.type===type&&x.sim_id===s.id&&x.user_id===u.id&&x.status==="pending";}))return[400,{error:"已有待审核的同类型申请"}];
-    D.requests.push({id:uid(),type:type,sim_id:s.id,asset_id:"",asset_name:(s.data.sim_no||"电话卡"),user_id:u.id,user_name:u.name,status:"pending",created:nowStr(),desc:b.desc||"",to_user_id:b.to_user_id||"",to_user_name:(type==="sim_transfer"?(D.users.find(function(x){return x.id===b.to_user_id;})||{}).name||"":"")});
+    D.requests.push({id:uid(),type:type,sim_id:s.id,asset_id:"",asset_name:(s.data.sim_no||"电话卡"),user_id:u.id,user_name:u.name,status:"pending",created:nowStr(),desc:b.desc||"",return_reason:b.return_reason||"",return_note:b.return_note||"",to_user_id:b.to_user_id||"",to_user_name:(type==="sim_transfer"?(D.users.find(function(x){return x.id===b.to_user_id;})||{}).name||"":"")});
     sv();return[200,{ok:true}];
   }
   var a=D.assets.find(function(x){return x.id===b.asset_id;});
@@ -629,7 +651,7 @@ function postRequest(tk,b){
   if(type==="edit"){if(!b.field||b.new_value===undefined)return[400,{error:"参数不完整"}];}
   // 重复待审检查
   if(D.requests.find(function(x){return x.type===type&&x.asset_id===a.id&&x.user_id===u.id&&x.status==="pending";}))return[400,{error:"已有待审核的同类型申请"}];
-  D.requests.push({id:uid(),type:type,asset_id:a.id,asset_name:assetName(a),user_id:u.id,user_name:u.name,desc:b.desc||"",reason:b.reason||"",note:"",status:"pending",created:nowStr(),handled_by:"",handled_at:"",field:b.field||"",new_value:b.new_value||""});
+  D.requests.push({id:uid(),type:type,asset_id:a.id,asset_name:assetName(a),user_id:u.id,user_name:u.name,desc:b.desc||"",reason:b.reason||"",note:"",return_reason:b.return_reason||"",return_note:b.return_note||"",status:"pending",created:nowStr(),handled_by:"",handled_at:"",field:b.field||"",new_value:b.new_value||""});
   sv();return[200,{ok:true}];
 }
 function approveRequest(tk,id,b){
@@ -645,9 +667,14 @@ function approveRequest(tk,id,b){
     if(r.type==="sim_take"){
       if(!s||s.data.sim_status!=="在库")return[400,{error:"卡状态已变化，无法通过"}];
       s.data.sim_status="在用";s.user_id=r.user_id;s.user_name=r.user_name;
+      // v13.12：再次领用后清除退回原因/备注
+      delete s.data.return_reason;delete s.data.return_note;
     }else if(r.type==="sim_return"){
       if(!s)return[404,{error:"卡不存在"}];
       s.data.sim_status="在库";delete s.user_id;delete s.user_name;
+      // v13.12：退回原因/备注同步到卡数据（所有页面一直显示）
+      if(r.return_reason)s.data.return_reason=r.return_reason;
+      if(r.return_note)s.data.return_note=r.return_note;
     }else{
       if(!s)return[404,{error:"卡不存在"}];
       var toU=D.users.find(function(x){return x.id===r.to_user_id;});
@@ -661,12 +688,17 @@ function approveRequest(tk,id,b){
   if(r.type==="take"){
     if(!a||a.status!=="available")return[400,{error:"设备状态已变化，无法通过"}];
     a.status="in_use";
+    // v13.12：再次领用后清除退回原因/备注
+    if(a.data){delete a.data.return_reason;delete a.data.return_note;}
     D.uses.push({id:uid(),asset_id:a.id,asset_name:assetName(a),user_id:r.user_id,user_name:r.user_name,take_time:nowStr(),return_time:"",take_req:r.id});
   }else if(r.type==="return"){
     if(!a)return[404,{error:"设备不存在"}];
     var rec=D.uses.find(function(x){return x.asset_id===a.id&&!x.return_time&&x.user_id===r.user_id;});
     if(rec)rec.return_time=nowStr();
     if(a.status==="in_use")a.status="available";
+    // v13.12：退回原因/备注同步到设备数据（所有页面一直显示）
+    if(r.return_reason)a.data.return_reason=r.return_reason;
+    if(r.return_note)a.data.return_note=r.return_note;
   }else if(r.type==="repair"){
     if(!a)return[404,{error:"设备不存在"}];
     if(a.status!=="repairing")a.status="repairing";
@@ -691,6 +723,9 @@ function actionReturnAsset(tk,b){
   var rec=D.uses.find(function(x){return x.asset_id===a.id&&!x.return_time;});
   if(rec)rec.return_time=nowStr();
   if(a.status==="in_use")a.status="available";
+  // v13.12：主管直接归还也同步退回原因/备注
+  if(b.return_reason)a.data.return_reason=b.return_reason;
+  if(b.return_note)a.data.return_note=b.return_note;
   sv();return[200,{ok:true}];
 }
 function cancelRequest(tk,id){
@@ -793,6 +828,8 @@ function actionTake(tk,b){
   var a=D.assets.find(function(x){return x.id===b.asset_id;});if(!a||a.status!=="available")return[400,{error:"设备不在库"}];
   if(u.role==="leader"&&!inScope(u,a.created_by))return[403,{error:"只能领用自己组的设备"}];
   a.status="in_use";
+  // v13.12：再次领用后清除退回原因/备注
+  if(a.data){delete a.data.return_reason;delete a.data.return_note;}
   D.uses.push({id:uid(),asset_id:a.id,asset_name:assetName(a),user_id:u.id,user_name:u.name,take_time:nowStr(),return_time:""});
   sv();return[200,{ok:true}];
 }
@@ -879,8 +916,10 @@ function batchAssign(tk,b){
     if(!a||a.status!=="available"){fail++;return;}
     if(u.role==="leader"&&!inScope(u,a.created_by)){fail++;return;}
     if(D.uses.find(function(x){return x.asset_id===aid&&!x.return_time;})){fail++;return;}
-    a.status="in_use";
-    D.uses.push({id:uid(),asset_id:a.id,asset_name:assetName(a),user_id:target.id,user_name:target.name,take_time:nowStr(),return_time:""});
+  a.status="in_use";
+  // v13.12：再次分配/领用后清除退回原因/备注
+  if(a.data){delete a.data.return_reason;delete a.data.return_note;}
+  D.uses.push({id:uid(),asset_id:a.id,asset_name:assetName(a),user_id:target.id,user_name:target.name,take_time:nowStr(),return_time:""});
     ok++;
   });
   if(!ok)return[400,{error:"所选设备都不可分配"}];
@@ -949,6 +988,8 @@ function doTransferAct(tk,id,b){
     if(oldUse)oldUse.return_time=nowStr();
     D.uses.push({id:uid(),asset_id:t.asset_id,asset_name:t.asset_name,user_id:t.to_id,user_name:t.to_name,take_time:nowStr(),return_time:""});
     if(a.status!=="repairing"&&a.status!=="scrapped")a.status="in_use";
+  // v13.12：转让后清除退回原因/备注（设备已被他人使用）
+  if(a.data){delete a.data.return_reason;delete a.data.return_note;}
     t.status="approved";t.handled_at=nowStr();t.handled_note=(b&&b.note)||"";
   }else if(act==="reject"){
     if(t.to_id!==u.id&&u.role!=="supervisor")return[403,{error:"只有接收人能拒绝"}];
@@ -1065,6 +1106,9 @@ function simReturnDirect(tk,b){
   if(!s)return[404,{error:"卡不存在"}];
   if(u.role==="leader"&&!inScope(u,s.created_by)&&!(s.user_id&&inScope(u,s.user_id)))return[403,{error:"只能退回本组的卡"}];
   if(s.data.sim_status==="在用"){s.data.sim_status="在库";delete s.user_id;delete s.user_name;}
+  // v13.12：主管直接退回也同步退回原因/备注
+  if(b.return_reason)s.data.return_reason=b.return_reason;
+  if(b.return_note)s.data.return_note=b.return_note;
   sv();return[200,{ok:true}];
 }
 function simAssign(tk,b){
@@ -1077,6 +1121,8 @@ function simAssign(tk,b){
   if(s.data.sim_status!=="在库"||s.user_id)return[400,{error:"卡不在库，无法分配"}];
   if(u.role==="leader"&&t.parent_id!==u.id)return[403,{error:"只能分配给自己的员工"}];
   s.data.sim_status="在用";s.user_id=t.id;s.user_name=t.name;
+  // v13.12：再次分配/领用后清除退回原因/备注
+  delete s.data.return_reason;delete s.data.return_note;
   sv();return[200,{ok:true}];
 }
 
@@ -1180,6 +1226,10 @@ function route(method,path,tk,body){
   if(path==="/api/actions/to_warehouse"&&method==="POST")return toWarehouse(tk,body);
   if(path==="/api/sims"&&method==="GET")return getSims(tk);
   if(path==="/api/sims"&&method==="POST")return postSim(tk,body);
+  // v13.12：退回原因选项
+  if(path==="/api/return_opts"&&method==="GET")return getReturnOpts(tk);
+  if(path==="/api/return_opts"&&method==="POST")return addReturnOpt(tk,body);
+  if(pp[1]==="api"&&pp[2]==="return_opts"&&method==="DELETE")return delReturnOpt(tk,decodeURIComponent(pp[3]||""));
   if(path==="/api/sims/update"&&method==="POST")return updateSim(tk,body);
 if(path==="/api/sims/batch_take"&&method==="POST")return simBatchTake(tk,body);
 if(path==="/api/sims/return_direct"&&method==="POST")return simReturnDirect(tk,body);
@@ -1393,6 +1443,13 @@ function assetTag(s){
   var m={available:["在库","tag-green"],in_use:["已领用","tag-blue"],repairing:["维修中","tag-orange"],scrapped:["已报废","tag-red"],deleted:["已删除","tag-gray"],shipped:["外寄中","tag-purple"]};
   var v=m[s]||[s,"tag-gray"];
   return "<span class=\"tag "+v[1]+"\">"+v[0]+"</span>";
+}
+// v13.12：退回原因/备注标签（退回仓库后显示在所有页面，直到再次领用或被修改）
+function returnTag(d){
+  if(!d||!d.return_reason)return "";
+  var t="<span class=\"tag tag-orange\" title=\""+(d.return_note?esc("备注："+d.return_note):"")+"\" style=\"margin-left:6px;cursor:default\">⤺ "+esc(d.return_reason)+"</span>";
+  if(d.return_note)t+="<span style=\"font-size:11px;color:var(--faint);margin-left:6px\">"+esc(d.return_note)+"</span>";
+  return t;
 }
 function repairTag(s){
   var m={repairing:["维修中","tag-orange"],fixed:["已修好","tag-green"],scrapped:["已报废","tag-red"]};
@@ -1616,7 +1673,7 @@ async function renderAssetTable(){
     });
     // v12.4：设备/型号/编号/手机号独立列；v13.8：手机号列受权限开关控制（开→单击可编辑）
     var phoneTd=allowPhone?("<td title=\"单击编辑手机号\" onclick=\"inlineEdit('"+a.id+"','phone','input',this)\" style=\"cursor:pointer\">"+(d.phone?esc(d.phone):"<span style=\"color:var(--faint)\">—</span>")+"</td>"):("<td>"+esc(d.phone||"—")+"</td>");
-    h+="<tr><td><b>"+esc(d.type||"—")+"</b></td><td>"+esc(d.model||"—")+"</td><td>"+esc(d.sn||"—")+" <button class=\"link-btn\" onclick=\"showScanModal('"+a.id+"')\" title=\"扫码登记抖音账号\">📷</button></td>"+phoneTd+extraTds+"<td><button class=\"link-btn\" onclick=\"filterByUser(this)\" data-v=\""+a.created_by+"\">"+esc(a.created_by_name)+"</button></td><td>"+(showUser?"<b>"+esc(showUser)+"</b>":"<span style=\"color:var(--faint)\">—</span>")+"</td><td>"+assetTag(a.status)+"</td><td class=\"num\">"+esc(a.created)+"</td><td>";
+    h+="<tr><td><b>"+esc(d.type||"—")+"</b></td><td>"+esc(d.model||"—")+"</td><td>"+esc(d.sn||"—")+" <button class=\"link-btn\" onclick=\"showScanModal('"+a.id+"')\" title=\"扫码登记抖音账号\">📷</button></td>"+phoneTd+extraTds+"<td><button class=\"link-btn\" onclick=\"filterByUser(this)\" data-v=\""+a.created_by+"\">"+esc(a.created_by_name)+"</button></td><td>"+(showUser?"<b>"+esc(showUser)+"</b>":"<span style=\"color:var(--faint)\">—</span>")+"</td><td>"+assetTag(a.status)+returnTag(d)+"</td><td class=\"num\">"+esc(a.created)+"</td><td>";
     if(STATE.user.role!=="member")h+="<button class=\"btn btn-sm btn-ghost\" onclick=\"openEditAsset('"+a.id+"',0)\" style=\"margin-right:6px\">编辑</button>";
     if(a.status==="available"){
       h+="<button class=\"btn btn-sm btn-green\" onclick=\"showDirectTake('"+a.id+"')\">直接领用</button> ";
@@ -1881,7 +1938,22 @@ async function renderUseTable(){
   document.getElementById("useTableBody").innerHTML=h;
 }
 async function directReturn(id){try{await apiPost("/api/uses/"+id,{});toast("已归还");renderUseTable();}catch(e){toast(e.message,"err");}}
-async function returnByAsset(id){try{await apiPost("/api/actions/return_asset",{asset_id:id});toast("已归还");renderAssetTable();}catch(e){toast(e.message,"err");}}
+async function returnByAsset(id){
+  var optsData=await apiGet("/api/return_opts");
+  var opts=optsData.opts||[];
+  var chips="";
+  opts.forEach(function(o){chips+="<span class=\"chip\" data-v=\""+esc(o)+"\" onclick=\"event.stopPropagation();pickReturnChip(this)\">"+esc(o)+"</span>";});
+  showModal("<h3>归还设备</h3><div style=\"font-size:14px;color:var(--sub);margin-bottom:10px\">把该设备归还（回仓库在库状态）</div>"
+    +"<div class=\"field\"><label>归还原因<span style=\"font-size:11px;color:var(--faint)\">（点选）</span></label><div class=\"chip-row\" id=\"rr_chips\" style=\"flex-wrap:wrap\">"+chips+"</div></div>"
+    +"<div class=\"field\"><label>备注（可选）</label><input id=\"rr_note\" placeholder=\"补充说明\"></div>"
+    +"<div class=\"m-btns\"><button class=\"btn btn-ghost\" onclick=\"closeModal()\">取消</button><button class=\"btn btn-orange\" onclick=\"returnByAssetDo('"+id+"')\">确认归还</button></div>");
+}
+async function returnByAssetDo(id){
+  var reasonEl=document.querySelector("#rr_chips .chip.on");
+  var reason=reasonEl?reasonEl.getAttribute("data-v"):"";
+  var note=document.getElementById("rr_note")?document.getElementById("rr_note").value.trim():"";
+  try{await apiPost("/api/actions/return_asset",{asset_id:id,return_reason:reason,return_note:note});toast("已归还");closeModal();renderAssetTable();}catch(e){toast(e.message,"err");}
+}
 
 // ===== 主管：维修管理 =====
 async function renderRepairs(){
@@ -1922,11 +1994,37 @@ async function renderOptions(){
   h+="<div class=\"card\"><div class=\"c-head\"><h3>权限开关</h3></div><div class=\"c-body\" id=\"permBody\">加载中…</div></div>";
   h+="<div class=\"card\"><div class=\"c-head\"><h3>手机台账 · 登记字段</h3></div><div class=\"c-body\" id=\"fieldBody\"></div></div>";
   h+="<div class=\"card\"><div class=\"c-head\"><h3>电话卡台账 · 登记字段</h3></div><div class=\"c-body\" id=\"simOptBody\"></div></div>";
+  // v13.12：退回原因选项（退回申请时选择，直接显示非下拉）
+  h+="<div class=\"card\"><div class=\"c-head\"><h3>退回原因选项</h3></div><div class=\"c-body\" id=\"returnOptBody\">加载中…</div></div>";
   document.getElementById("content").innerHTML=h;
   renderPermBody();
   renderFieldList();
   renderSimFieldList();
+  renderReturnOptList();
 }
+// v13.12：退回原因选项渲染（主管/组长可增删；退回申请/直接退回时快捷选择）
+async function renderReturnOptList(){
+  var body=document.getElementById("returnOptBody");if(!body)return;
+  try{
+    var data=await apiGet("/api/return_opts");
+    var opts=data.opts||[];
+    var h="<div style=\"font-size:12px;color:var(--faint);margin-bottom:10px\">员工提交退回申请时可选择的退回原因（账号封禁、老号、没号等），选择后会同步显示在所有页面，直到设备/卡再次被领用或被修改</div>";
+    h+="<div style=\"display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px\">";
+    opts.forEach(function(o){
+      h+="<span class=\"tag tag-gray\" style=\"padding:5px 12px\">"+esc(o)
+        +" <a href=\"javascript:void(0)\" onclick=\"delReturnOptF('"+esc(o)+"')\" style=\"color:var(--red);margin-left:2px\">✕</a></span>";
+    });
+    h+="</div>";
+    h+="<div style=\"display:flex;gap:8px\"><input id=\"ro_new\" placeholder=\"添加退回原因选项（如：账号封禁）\" style=\"height:36px;border:1.5px solid var(--line);border-radius:8px;padding:0 12px;font-size:13px;flex:1\"><button class=\"btn btn-sm btn-primary\" onclick=\"addReturnOptF()\">添加</button></div>";
+    body.innerHTML=h;
+  }catch(e){body.innerHTML="<span style=\"color:var(--faint)\">加载失败</span>";}
+}
+async function addReturnOptF(){
+  var v=document.getElementById("ro_new").value.trim();
+  if(!v){toast("请填写选项","err");return;}
+  try{await apiPost("/api/return_opts",{value:v});toast("已添加");renderReturnOptList();}catch(e){toast(e.message,"err");}
+}
+async function delReturnOptF(v){if(!confirm("删除该退回原因选项？"))return;try{await apiDel("/api/return_opts/"+encodeURIComponent(v));toast("已删除");renderReturnOptList();}catch(e){toast(e.message,"err");}}
 // v13.8：权限开关渲染与保存
 async function renderPermBody(){
   var body=document.getElementById("permBody");if(!body)return;
@@ -2267,7 +2365,7 @@ async function renderSimWhTable(){
     var bindInfo=s.asset_id?(s.asset_sn?("📱 "+esc(s.asset_name)+" 编号:"+esc(s.asset_sn)):("📱 "+esc(s.asset_name))):"<span style=\"color:var(--faint)\">未绑定</span>";
     // v13.10：行内"领用"按钮（在库卡，提交申请→主管审核）
     var swTake=(d.sim_status==="在库"&&!s.user_id);
-    h+="<tr><td><input type=\"checkbox\" class=\"sw-chk\" value=\""+s.id+"\" onchange=\"swUpdateSel()\"></td><td><b>"+esc(d.sim_no||"—")+"</b></td><td>"+esc(d.sim_type||"—")+"</td><td>"+bindInfo+"</td><td>"+esc(s.created_by_name||"—")+"</td><td class=\"num\">"+esc(s.created)+"</td><td>"+(swTake?"<button class=\"btn btn-sm btn-green\" onclick=\"swTakeOne('"+s.id+"')\">领用</button>":"<span style=\"color:var(--faint);font-size:12px\">—</span>")+"</td>"+(isMgr?"<td style=\"white-space:nowrap\"><button class=\"btn btn-sm btn-ghost\" onclick=\"showEditSim('"+s.id+"')\">编辑</button> <button class=\"btn btn-sm btn-danger\" onclick=\"delSimF('"+s.id+"')\">删除</button></td>":"")+"</tr>";
+    h+="<tr><td><input type=\"checkbox\" class=\"sw-chk\" value=\""+s.id+"\" onchange=\"swUpdateSel()\"></td><td><b>"+esc(d.sim_no||"—")+"</b></td><td>"+esc(d.sim_type||"—")+"</td><td>"+bindInfo+returnTag(d)+"</td><td>"+esc(s.created_by_name||"—")+"</td><td class=\"num\">"+esc(s.created)+"</td><td>"+(swTake?"<button class=\"btn btn-sm btn-green\" onclick=\"swTakeOne('"+s.id+"')\">领用</button>":"<span style=\"color:var(--faint);font-size:12px\">—</span>")+"</td>"+(isMgr?"<td style=\"white-space:nowrap\"><button class=\"btn btn-sm btn-ghost\" onclick=\"showEditSim('"+s.id+"')\">编辑</button> <button class=\"btn btn-sm btn-danger\" onclick=\"delSimF('"+s.id+"')\">删除</button></td>":"")+"</tr>";
   });
   if(!h)h="<tr><td colspan=\""+(isMgr?8:7)+"\" class=\"empty\">暂无在库电话卡</td></tr>";
   document.getElementById("swBody").innerHTML=h;
@@ -2443,6 +2541,9 @@ async function renderSimTable(){
     var d=s.data||{};
     // v13.9：员工只看自己的卡（登记或领用）；主管/组长可按人快捷分类（登记人）
     if(isMinePage&&s.created_by!==me.id&&s.user_id!==me.id)return;
+    // v13.6：员工可编辑/删除自己登记的电话卡；v13.12：自己领用的卡也可编辑备注（删除仍限自己登记）
+    var canManage=role!=="member"||s.created_by===STATE.user.id||s.user_id===STATE.user.id;
+    var canDelete=role!=="member"||s.created_by===STATE.user.id;
     if(SIM_FILTER_USER&&s.created_by!==SIM_FILTER_USER)return;
     if(SIM_STATUS_FILTER&&d.sim_status!==SIM_STATUS_FILTER)return;
     if(kw&&((d.sim_no||"")+" "+(d.sim_type||"")+" "+(s.asset_sn||"")+" "+(s.asset_name||"")).indexOf(kw)<0)return;
@@ -2451,17 +2552,24 @@ async function renderSimTable(){
     var extraTds="";
     (data.simfields||[]).forEach(function(f){
       if(f.id==="sim_type"&&f.label==="运营商")return;
-      extraTds+="<td>"+(d[f.id]?esc(d[f.id]):"<span style=\"color:var(--faint)\">—</span>")+"</td>";
+      var canEdit=canManage;
+      var fv=d[f.id];
+      var disp=fv?esc(fv):"<span style=\"color:var(--faint)\">—</span>";
+      // v13.12：员工"我的电话卡"备注可单击直接编辑（自己登记或领用的卡）
+      if(canEdit)extraTds+="<td title=\"单击编辑\" onclick=\"simInlineEdit('"+s.id+"','"+f.id+"','"+(f.type==="select"?"select":"input")+"',this)\" style=\"cursor:pointer\">"+disp+"</td>";
+      else extraTds+="<td>"+disp+"</td>";
     });
     // v13.7：使用人 = 领用者；在用卡可退回仓库；审核中标记
     var isUseMine=s.user_id===STATE.user.id;
     var myReq=reqs.find(function(x){return x.sim_id===s.id&&x.status==="pending";});
     var useTd=esc(s.user_name||"—");
     if(myReq)useTd+=" <span class=\"tag tag-orange\" style=\"font-size:11px;padding:2px 8px\">审核中</span>";
-    h+="<tr><td><b>"+esc(d.sim_no||"—")+"</b></td><td>"+esc(d.sim_type||"—")+"</td>"+extraTds+"<td>"+bindInfo+"</td><td>"+useTd+"</td><td class=\"num\">"+esc(s.created)+"</td><td style=\"white-space:nowrap\">";
+    // v13.12：退回原因/备注标签（卡退回后在库，显示在所有页面直到再次领用或被修改）
+    var retTag=returnTag(d);
+    h+="<tr><td><b>"+esc(d.sim_no||"—")+"</b></td><td>"+esc(d.sim_type||"—")+"</td>"+extraTds+"<td>"+bindInfo+"</td><td>"+useTd+retTag+"</td><td class=\"num\">"+esc(s.created)+"</td><td style=\"white-space:nowrap\">";
     // v13.6：员工可编辑/删除自己登记的电话卡（跟登记手机一样的原理）
-    var canManage=role!=="member"||s.created_by===STATE.user.id;
-    if(canManage)h+="<button class=\"btn btn-sm btn-ghost\" onclick=\"showEditSim('"+s.id+"')\">编辑</button> <button class=\"btn btn-sm btn-danger\" onclick=\"delSimF('"+s.id+"')\">删除</button>";
+    if(canManage)h+="<button class=\"btn btn-sm btn-ghost\" onclick=\"showEditSim('"+s.id+"')\">编辑</button>";
+    if(canDelete)h+=" <button class=\"btn btn-sm btn-danger\" onclick=\"delSimF('"+s.id+"')\">删除</button>";
     // v13.7：在用卡退回仓库（员工退自己用的走申请，主管/组长直接退）
     if(d.sim_status==="在用"&&!myReq&&(role!=="member"||isUseMine)){
       if(role!=="member")h+="<button class=\"btn btn-sm btn-orange\" onclick=\"simDirectReturnF('"+s.id+"')\">退回仓库</button>";
@@ -2474,6 +2582,38 @@ async function renderSimTable(){
   var extraCnt=(data.simfields||[]).filter(function(f){return !(f.id==="sim_type"&&f.label==="运营商");}).length;
   if(!h)h="<tr><td colspan=\""+(6+extraCnt)+"\" class=\"empty\">暂无电话卡，点击右上角登记</td></tr>";
   document.getElementById("simBody").innerHTML=h;
+}
+// v13.12：电话卡动态字段单击编辑（员工可编辑自己登记/领用的卡备注）
+async function simInlineEdit(simId, fieldId, type, td){
+  try{
+    var simsData=await apiGet("/api/sims");
+    var s=(simsData.sims||[]).find(function(x){return x.id===simId;});
+    if(!s){toast("电话卡不存在","err");return;}
+    var d=s.data||{};
+    var cur=d[fieldId]||"";
+    var html="";
+    if(type==="select"){
+      var f=(simsData.simfields||[]).find(function(x){return x.id===fieldId;});
+      var chips="";
+      (f&&f.options||[]).forEach(function(o){
+        chips+="<span class=\"chip"+(cur===o?" on":"")+"\" data-v=\""+esc(o)+"\" onclick=\"event.stopPropagation();simInlineSave('"+simId+"','"+fieldId+"','"+esc(o)+"')\">"+esc(o)+"</span>";
+      });
+      html="<div class=\"chip-row\" style=\"white-space:nowrap\">"+chips+"</div>";
+    }else{
+      html="<input value=\""+esc(cur)+"\" onclick=\"event.stopPropagation()\" style=\"width:140px;box-sizing:border-box;padding:4px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:13px\" onkeydown=\"if(event.key==='Enter')simInlineSave('"+simId+"','"+fieldId+"',this.value)\" onblur=\"renderSimTable()\">";
+    }
+    td.innerHTML=html;
+    var inp=td.querySelector("input");
+    if(inp){inp.focus();inp.select();}
+  }catch(e){toast(e.message,"err");}
+}
+async function simInlineSave(simId, fieldId, value){
+  try{
+    var body={id:simId,data:{}};body.data[fieldId]=value;
+    await apiPost("/api/sims/update",body);
+    toast("已保存");
+  }catch(e){toast(e.message,"err");}
+  renderSimTable();
 }
 async function showAddSim(){
   var data=await apiGet("/api/sims");
@@ -2567,17 +2707,38 @@ async function saveEditSim(id){
 async function delSimF(id){if(!confirm("删除该电话卡？"))return;try{await apiDel("/api/sims/"+id);toast("已删除");renderSimTable();}catch(e){toast(e.message,"err");}}
 // v13.7：主管/组长直接退卡回仓库
 async function simDirectReturnF(id){
-  if(!confirm("把该电话卡退回仓库（在库状态）？"))return;
-  try{await apiPost("/api/sims/return_direct",{sim_id:id});toast("已退回仓库");if(CURRENT_PAGE==="sims")renderSimTable();else if(CURRENT_PAGE==="simwh")renderSimWhTable();}catch(e){toast(e.message,"err");}
+  var optsData=await apiGet("/api/return_opts");
+  var opts=optsData.opts||[];
+  var chips="";
+  opts.forEach(function(o){chips+="<span class=\"chip\" data-v=\""+esc(o)+"\" onclick=\"event.stopPropagation();pickReturnChip(this)\">"+esc(o)+"</span>";});
+  showModal("<h3>退回电话卡</h3><div style=\"font-size:14px;color:var(--sub);margin-bottom:10px\">把该电话卡退回仓库（在库状态）</div>"
+    +"<div class=\"field\"><label>退回原因<span style=\"font-size:11px;color:var(--faint)\">（点选）</span></label><div class=\"chip-row\" id=\"rr_chips\" style=\"flex-wrap:wrap\">"+chips+"</div></div>"
+    +"<div class=\"field\"><label>备注（可选）</label><input id=\"rr_note\" placeholder=\"补充说明\"></div>"
+    +"<div class=\"m-btns\"><button class=\"btn btn-ghost\" onclick=\"closeModal()\">取消</button><button class=\"btn btn-orange\" onclick=\"simDirectReturnDo('"+id+"')\">确认退回</button></div>");
+}
+async function simDirectReturnDo(id){
+  var reasonEl=document.querySelector("#rr_chips .chip.on");
+  var reason=reasonEl?reasonEl.getAttribute("data-v"):"";
+  var note=document.getElementById("rr_note")?document.getElementById("rr_note").value.trim():"";
+  try{await apiPost("/api/sims/return_direct",{sim_id:id,return_reason:reason,return_note:note});toast("已退回仓库");closeModal();if(CURRENT_PAGE==="sims")renderSimTable();else if(CURRENT_PAGE==="simwh")renderSimWhTable();}catch(e){toast(e.message,"err");}
 }
 // v13.7：员工提交退卡申请（需审核）
-function simReqReturn(id){
+async function simReqReturn(id){
+  var optsData=await apiGet("/api/return_opts");
+  var opts=optsData.opts||[];
+  var chips="";
+  opts.forEach(function(o){chips+="<span class=\"chip\" data-v=\""+esc(o)+"\" onclick=\"event.stopPropagation();pickReturnChip(this)\">"+esc(o)+"</span>";});
   showModal("<h3>退卡申请</h3><div style=\"font-size:14px;color:var(--sub);margin-bottom:10px\">确认提交该电话卡的退回申请？</div>"
     +"<div style=\"font-size:12px;color:var(--orange)\">⚠ 提交后需主管审核同意</div>"
+    +"<div class=\"field\"><label>退回原因<span style=\"font-size:11px;color:var(--faint)\">（点选）</span></label><div class=\"chip-row\" id=\"rr_chips\" style=\"flex-wrap:wrap\">"+chips+"</div></div>"
+    +"<div class=\"field\"><label>备注（可选）</label><input id=\"rr_note\" placeholder=\"补充说明\"></div>"
     +"<div class=\"m-btns\"><button class=\"btn btn-ghost\" onclick=\"closeModal()\">取消</button><button class=\"btn btn-orange\" onclick=\"submitSimReturn('"+id+"')\">提交申请</button></div>");
 }
 async function submitSimReturn(id){
-  try{await apiPost("/api/requests",{type:"sim_return",sim_id:id});toast("已提交，等待审核");closeModal();renderSimTable();refreshBadges();}catch(e){toast(e.message,"err");}
+  var reasonEl=document.querySelector("#rr_chips .chip.on");
+  var reason=reasonEl?reasonEl.getAttribute("data-v"):"";
+  var note=document.getElementById("rr_note")?document.getElementById("rr_note").value.trim():"";
+  try{await apiPost("/api/requests",{type:"sim_return",sim_id:id,return_reason:reason,return_note:note});toast("已提交，等待审核");closeModal();renderSimTable();refreshBadges();}catch(e){toast(e.message,"err");}
 }
 // v13.9：电话卡转让（员工把自己领用的卡转给同组员工，需主管审核）
 async function showSimTransfer(simId){
@@ -2686,7 +2847,7 @@ async function renderWarehouseTable(){
     // v13.2：使用人仅显示实际在用者；在库设备使用人为空（登记人另有列）
     var showUser=myUse?myUse.user_name:"";
     // v13.10：行内"领用"按钮（在库可领，提交申请→主管审核）
-    h+="<tr><td><input type=\"checkbox\" class=\"wh-chk\" value=\""+a.id+"\" "+(canTake?"":"disabled")+" onchange=\"whUpdateSel()\"></td><td><b>"+esc(d.type||"—")+"</b></td><td>"+esc(d.model||"—")+"</td><td>"+esc(d.sn||"—")+"</td><td>"+esc(d.phone||"—")+"</td><td>"+assetTag(a.status)+(a.status==="shipped"?(function(){var shRec=(D.shipments||[]).find(function(x){return x.asset_id===a.id&&x.status==="shipped";});return shRec&&shRec.ship_time?(" · "+shipDays(shRec.ship_time)+" 天"):"";})():"")+(canTake?"":"<br><span style=\"font-size:11px;color:var(--faint)\">不可领用</span>")+"</td><td>"+(showUser?"<b>"+esc(showUser)+"</b>":"<span style=\"color:var(--faint)\">—</span>")+"</td><td>"+esc(a.created_by_name)+"</td><td class=\"num\">"+esc(a.created)+"</td><td>"+(canTake?"<button class=\"btn btn-sm btn-green\" onclick=\"whTakeOne('"+a.id+"')\">领用</button>":"<span style=\"color:var(--faint);font-size:12px\">—</span>")+"</td>"+(isMgr?"<td><button class=\"btn btn-sm btn-ghost\" onclick=\"openEditAsset('"+a.id+"',0)\">编辑</button></td>":"")+"</tr>";
+    h+="<tr><td><input type=\"checkbox\" class=\"wh-chk\" value=\""+a.id+"\" "+(canTake?"":"disabled")+" onchange=\"whUpdateSel()\"></td><td><b>"+esc(d.type||"—")+"</b></td><td>"+esc(d.model||"—")+"</td><td>"+esc(d.sn||"—")+"</td><td>"+esc(d.phone||"—")+"</td><td>"+assetTag(a.status)+returnTag(d)+(a.status==="shipped"?(function(){var shRec=(D.shipments||[]).find(function(x){return x.asset_id===a.id&&x.status==="shipped";});return shRec&&shRec.ship_time?(" · "+shipDays(shRec.ship_time)+" 天"):"";})():"")+(canTake?"":"<br><span style=\"font-size:11px;color:var(--faint)\">不可领用</span>")+"</td><td>"+(showUser?"<b>"+esc(showUser)+"</b>":"<span style=\"color:var(--faint)\">—</span>")+"</td><td>"+esc(a.created_by_name)+"</td><td class=\"num\">"+esc(a.created)+"</td><td>"+(canTake?"<button class=\"btn btn-sm btn-green\" onclick=\"whTakeOne('"+a.id+"')\">领用</button>":"<span style=\"color:var(--faint);font-size:12px\">—</span>")+"</td>"+(isMgr?"<td><button class=\"btn btn-sm btn-ghost\" onclick=\"openEditAsset('"+a.id+"',0)\">编辑</button></td>":"")+"</tr>";
   });
   if(!h)h="<tr><td colspan=\""+(isMgr?11:10)+"\" class=\"empty\">暂无符合条件的手机</td></tr>";
   document.getElementById("whBody").innerHTML=h;
@@ -2796,7 +2957,7 @@ async function renderMyDevList(){
     }
     // v13.2：使用人仅显示实际在用者；在库设备使用人为空
     var showUser=myUse?myUse.user_name:"";
-    h+="<tr><td>"+esc(d.type||"—")+"</td><td>"+esc(d.model||"—")+"</td><td>"+esc(d.phone||"—")+"</td><td>"+esc(d.sn||"—")+" <button class=\"link-btn\" onclick=\"showScanModal('"+a.id+"')\" title=\"拍照识别抖音账号\">📷</button></td>"+accTd+"<td>"+assetTag(a.status)+(showUser?"<br><span style=\"font-size:11px;color:var(--faint)\">使用人："+esc(showUser)+"</span>":"")+(myReq?"<br><span style=\"font-size:11px;color:var(--orange)\">审核中</span>":"")+"</td><td style=\"white-space:nowrap\">";
+    h+="<tr><td>"+esc(d.type||"—")+"</td><td>"+esc(d.model||"—")+"</td><td>"+esc(d.phone||"—")+"</td><td>"+esc(d.sn||"—")+" <button class=\"link-btn\" onclick=\"showScanModal('"+a.id+"')\" title=\"拍照识别抖音账号\">📷</button></td>"+accTd+"<td>"+assetTag(a.status)+returnTag(d)+(showUser?"<br><span style=\"font-size:11px;color:var(--faint)\">使用人："+esc(showUser)+"</span>":"")+(myReq?"<br><span style=\"font-size:11px;color:var(--orange)\">审核中</span>":"")+"</td><td style=\"white-space:nowrap\">";
     if(a.status==="in_use"){
       h+="<button class=\"btn btn-sm btn-orange\" onclick=\"reqReturn('"+a.id+"')\">退回仓库</button> ";
       h+="<button class=\"btn btn-sm btn-orange\" onclick=\"reqRepair('"+a.id+"')\">报修申请</button> ";
@@ -3074,11 +3235,28 @@ async function submitTake(){
   if(!aid){document.getElementById("t_err").textContent="请选择设备";return;}
   try{await apiPost("/api/requests",{type:"take",asset_id:aid,desc:document.getElementById("t_note").value.trim()});toast("已提交，等待审核");closeModal();renderMyDevList();refreshBadges();}catch(e){document.getElementById("t_err").textContent=e.message;}
 }
-function reqReturn(id){
-  showModal("<h3>退还申请</h3><div style=\"font-size:14px;color:var(--sub);margin-bottom:10px\">确认提交该设备的退还申请？</div>"
-    +"<div class=\"m-btns\"><button class=\"btn btn-ghost\" onclick=\"closeModal()\">取消</button><button class=\"btn btn-orange\" onclick=\"submitReturn('"+id+"')\">提交申请</button></div>");
+async function reqReturn(id){
+  var optsData=await apiGet("/api/return_opts");
+  var opts=optsData.opts||[];
+  var chips="";
+  opts.forEach(function(o){chips+="<span class=\"chip\" data-v=\""+esc(o)+"\" onclick=\"event.stopPropagation();pickReturnChip(this)\">"+esc(o)+"</span>";});
+  showModal("<h3>退还申请</h3>"
+    +"<div style=\"font-size:14px;color:var(--sub);margin-bottom:10px\">确认提交该设备的退还申请？</div>"
+    +"<div class=\"field\"><label>退回原因<span style=\"font-size:11px;color:var(--faint)\">（点选）</span></label><div class=\"chip-row\" id=\"rr_chips\" style=\"flex-wrap:wrap\">"+chips+"</div></div>"
+    +"<div class=\"field\"><label>备注（可选）</label><input id=\"rr_note\" placeholder=\"补充说明，如：账号异常详情\"></div>"
+    +"<div class=\"m-btns\"><button class=\"btn btn-ghost\" onclick=\"closeModal()\">取消</button><button class=\"btn btn-orange\" onclick=\"submitReturn('"+id+"')\">提交申请</button></div><div class=\"err\" id=\"rr_err\"></div>");
 }
-async function submitReturn(id){try{await apiPost("/api/requests",{type:"return",asset_id:id});toast("已提交，等待审核");closeModal();renderMyDevList();refreshBadges();}catch(e){toast(e.message,"err");}}
+function pickReturnChip(el){
+  var on=el.classList.contains("on");
+  document.querySelectorAll("#rr_chips .chip").forEach(function(c){c.classList.remove("on");});
+  if(!on)el.classList.add("on");
+}
+async function submitReturn(id){
+  var reasonEl=document.querySelector("#rr_chips .chip.on");
+  var reason=reasonEl?reasonEl.getAttribute("data-v"):"";
+  var note=document.getElementById("rr_note")?document.getElementById("rr_note").value.trim():"";
+  try{await apiPost("/api/requests",{type:"return",asset_id:id,return_reason:reason,return_note:note});toast("已提交，等待审核");closeModal();renderMyDevList();refreshBadges();}catch(e){toast(e.message,"err");}
+}
 function reqDelete(id){
   showModal("<h3>删除设备申请</h3>"
     +"<div class=\"field\"><label>删除原因</label><input id=\"d_reason\" placeholder=\"如：设备已损坏\"></div>"
