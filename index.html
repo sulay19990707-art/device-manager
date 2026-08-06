@@ -2184,7 +2184,8 @@ async function renderSimWarehouse(){
     h+="<div class=\"mb\" style=\"display:flex;gap:10px;align-items:center;flex-wrap:wrap\"><select id=\"swAssignUser\" style=\"height:38px;border:1.5px solid var(--line);border-radius:9px;padding:0 12px;font-size:13px;background:#fff\"><option value=\"\">选择要分配的员工…</option></select><button class=\"btn btn-green\" id=\"swAssignBtn\" onclick=\"simWhAssign()\">📤 分配给所选员工 (0)</button></div>";
   }
   h+="<div class=\"mb\"><button class=\"btn btn-primary\" id=\"swTakeBtn\" onclick=\"simWhTake()\">📥 申请领用所选 (0)</button><span id=\"swSelInfo\" style=\"font-size:13px;color:var(--sub)\"></span></div>";
-  h+="<div class=\"card\"><div class=\"c-head\"><h3>在库电话卡</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th style=\"width:36px\"><input type=\"checkbox\" id=\"swAll\" onchange=\"swToggleAll(this)\"></th><th>卡号</th><th>运营商</th><th>绑定手机</th><th>登记人</th><th>登记时间</th>"+(isMgr?"<th>操作</th>":"")+"</tr></thead><tbody id=\"swBody\"></tbody></table></div></div>";
+  // v13.10：行内"领用"按钮（登记时间后，提交申请→主管审核）
+  h+="<div class=\"card\"><div class=\"c-head\"><h3>在库电话卡</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th style=\"width:36px\"><input type=\"checkbox\" id=\"swAll\" onchange=\"swToggleAll(this)\"></th><th>卡号</th><th>运营商</th><th>绑定手机</th><th>登记人</th><th>登记时间</th><th>领用</th>"+(isMgr?"<th>操作</th>":"")+"</tr></thead><tbody id=\"swBody\"></tbody></table></div></div>";
   document.getElementById("content").innerHTML=h;
   if(isMgr)loadSimWhUsers();
   renderSimWhBars();
@@ -2252,9 +2253,11 @@ async function renderSimWhTable(){
     if(kw&&((d.sim_no||"")+" "+(d.sim_type||"")).indexOf(kw)<0)return;
     // v13.8：仓库电话卡显示绑定手机
     var bindInfo=s.asset_id?(s.asset_sn?("📱 "+esc(s.asset_name)+" 编号:"+esc(s.asset_sn)):("📱 "+esc(s.asset_name))):"<span style=\"color:var(--faint)\">未绑定</span>";
-    h+="<tr><td><input type=\"checkbox\" class=\"sw-chk\" value=\""+s.id+"\" onchange=\"swUpdateSel()\"></td><td><b>"+esc(d.sim_no||"—")+"</b></td><td>"+esc(d.sim_type||"—")+"</td><td>"+bindInfo+"</td><td>"+esc(s.created_by_name||"—")+"</td><td class=\"num\">"+esc(s.created)+"</td>"+(isMgr?"<td style=\"white-space:nowrap\"><button class=\"btn btn-sm btn-ghost\" onclick=\"showEditSim('"+s.id+"')\">编辑</button> <button class=\"btn btn-sm btn-danger\" onclick=\"delSimF('"+s.id+"')\">删除</button></td>":"")+"</tr>";
+    // v13.10：行内"领用"按钮（在库卡，提交申请→主管审核）
+    var swTake=(d.sim_status==="在库"&&!s.user_id);
+    h+="<tr><td><input type=\"checkbox\" class=\"sw-chk\" value=\""+s.id+"\" onchange=\"swUpdateSel()\"></td><td><b>"+esc(d.sim_no||"—")+"</b></td><td>"+esc(d.sim_type||"—")+"</td><td>"+bindInfo+"</td><td>"+esc(s.created_by_name||"—")+"</td><td class=\"num\">"+esc(s.created)+"</td><td>"+(swTake?"<button class=\"btn btn-sm btn-green\" onclick=\"swTakeOne('"+s.id+"')\">领用</button>":"<span style=\"color:var(--faint);font-size:12px\">—</span>")+"</td>"+(isMgr?"<td style=\"white-space:nowrap\"><button class=\"btn btn-sm btn-ghost\" onclick=\"showEditSim('"+s.id+"')\">编辑</button> <button class=\"btn btn-sm btn-danger\" onclick=\"delSimF('"+s.id+"')\">删除</button></td>":"")+"</tr>";
   });
-  if(!h)h="<tr><td colspan=\""+(isMgr?7:6)+"\" class=\"empty\">暂无在库电话卡</td></tr>";
+  if(!h)h="<tr><td colspan=\""+(isMgr?8:7)+"\" class=\"empty\">暂无在库电话卡</td></tr>";
   document.getElementById("swBody").innerHTML=h;
   swUpdateSel();
 }
@@ -2610,8 +2613,8 @@ async function renderWarehouse(){
     h+="<button class=\"btn btn-green\" id=\"whAssignBtn\" onclick=\"whAssignTake()\">📤 领用给所选员工 (0)</button>";
   }
   h+="<button class=\"btn btn-primary\" id=\"whTakeBtn\" onclick=\"whBatchTake()\">📥 申请领用所选 (0)</button><span id=\"whSelInfo\" style=\"font-size:13px;color:var(--sub)\"></span></div>";
-  // v13.3：主管/组长可编辑——加操作列
-  h+="<div class=\"card\"><div class=\"c-head\"><h3>手机列表</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th style=\"width:36px\"><input type=\"checkbox\" id=\"whAll\" onchange=\"whToggleAll(this)\"></th><th>设备</th><th>手机型号</th><th>手机编号</th><th>手机号</th><th>状态</th><th>使用人</th><th>登记人</th><th>登记时间</th>"+(isManager?"<th>操作</th>":"")+"</tr></thead><tbody id=\"whBody\"></tbody></table></div></div>";
+  // v13.10：行内"领用"按钮（登记时间后，点一下提交申请→主管审核）
+  h+="<div class=\"card\"><div class=\"c-head\"><h3>手机列表</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th style=\"width:36px\"><input type=\"checkbox\" id=\"whAll\" onchange=\"whToggleAll(this)\"></th><th>设备</th><th>手机型号</th><th>手机编号</th><th>手机号</th><th>状态</th><th>使用人</th><th>登记人</th><th>登记时间</th><th>领用</th>"+(isManager?"<th>操作</th>":"")+"</tr></thead><tbody id=\"whBody\"></tbody></table></div></div>";
   document.getElementById("content").innerHTML=h;
   // 加载可分配员工列表（主管=全部员工，组长=自己的员工）
   if(isManager)loadWhAssignUsers();
@@ -2670,10 +2673,10 @@ async function renderWarehouseTable(){
     var myUse=useData.uses.find(function(x){return x.asset_id===a.id&&!x.return_time;});
     // v13.2：使用人仅显示实际在用者；在库设备使用人为空（登记人另有列）
     var showUser=myUse?myUse.user_name:"";
-    // v12.4：设备/型号/编号/手机号独立列
-    h+="<tr><td><input type=\"checkbox\" class=\"wh-chk\" value=\""+a.id+"\" "+(canTake?"":"disabled")+" onchange=\"whUpdateSel()\"></td><td><b>"+esc(d.type||"—")+"</b></td><td>"+esc(d.model||"—")+"</td><td>"+esc(d.sn||"—")+"</td><td>"+esc(d.phone||"—")+"</td><td>"+assetTag(a.status)+(canTake?"":"<br><span style=\"font-size:11px;color:var(--faint)\">不可领用</span>")+"</td><td>"+(showUser?"<b>"+esc(showUser)+"</b>":"<span style=\"color:var(--faint)\">—</span>")+"</td><td>"+esc(a.created_by_name)+"</td><td class=\"num\">"+esc(a.created)+"</td>"+(isMgr?"<td><button class=\"btn btn-sm btn-ghost\" onclick=\"openEditAsset('"+a.id+"',0)\">编辑</button></td>":"")+"</tr>";
+    // v13.10：行内"领用"按钮（在库可领，提交申请→主管审核）
+    h+="<tr><td><input type=\"checkbox\" class=\"wh-chk\" value=\""+a.id+"\" "+(canTake?"":"disabled")+" onchange=\"whUpdateSel()\"></td><td><b>"+esc(d.type||"—")+"</b></td><td>"+esc(d.model||"—")+"</td><td>"+esc(d.sn||"—")+"</td><td>"+esc(d.phone||"—")+"</td><td>"+assetTag(a.status)+(canTake?"":"<br><span style=\"font-size:11px;color:var(--faint)\">不可领用</span>")+"</td><td>"+(showUser?"<b>"+esc(showUser)+"</b>":"<span style=\"color:var(--faint)\">—</span>")+"</td><td>"+esc(a.created_by_name)+"</td><td class=\"num\">"+esc(a.created)+"</td><td>"+(canTake?"<button class=\"btn btn-sm btn-green\" onclick=\"whTakeOne('"+a.id+"')\">领用</button>":"<span style=\"color:var(--faint);font-size:12px\">—</span>")+"</td>"+(isMgr?"<td><button class=\"btn btn-sm btn-ghost\" onclick=\"openEditAsset('"+a.id+"',0)\">编辑</button></td>":"")+"</tr>";
   });
-  if(!h)h="<tr><td colspan=\""+(isMgr?10:9)+"\" class=\"empty\">暂无符合条件的手机</td></tr>";
+  if(!h)h="<tr><td colspan=\""+(isMgr?11:10)+"\" class=\"empty\">暂无符合条件的手机</td></tr>";
   document.getElementById("whBody").innerHTML=h;
   whUpdateSel();
 }
@@ -2699,6 +2702,22 @@ async function whBatchTake(){
     toast("已提交 "+r.submitted+" 台，等待审核");
     renderWarehouseTable();
     refreshBadges();
+  }catch(e){toast(e.message,"err");}
+}
+// v13.10：行内单台领用（提交申请→主管/组长审核）
+async function whTakeOne(id){
+  try{
+    await apiPost("/api/requests",{type:"take",asset_id:id});
+    toast("已提交领用申请，等待审核");
+    renderWarehouseTable();refreshBadges();
+  }catch(e){toast(e.message,"err");}
+}
+// v13.10：行内单卡领用（提交申请→主管/组长审核）
+async function swTakeOne(id){
+  try{
+    var r=await apiPost("/api/sims/batch_take",{sim_ids:[id]});
+    toast("已提交领用申请，等待审核");
+    renderSimWhTable();refreshBadges();
   }catch(e){toast(e.message,"err");}
 }
 // v12.5：主管/组长代领用——把所选设备直接分配给指定员工
