@@ -1380,6 +1380,15 @@ async function refreshBadges(){
 function navTo(page){CURRENT_PAGE=page;renderSidebar();if(page==="review")renderReview();else if(page==="assets")renderAssets();else if(page==="uses")renderUses();else if(page==="repairs")renderRepairs();else if(page==="stats")renderStats();else if(page==="options")renderOptions();else if(page==="warehouse")renderWarehouse();else if(page==="sims")renderSims();else if(page==="simwh")renderSimWarehouse();else if(page==="members")renderMembers();else if(page==="mydev")renderMyDev();else if(page==="mymain")renderMyMain();}
 
 // ===== 标签 =====
+// v13.11：外寄等待时长（寄出时间 → 当前/寄回时间，单位天）
+function shipDays(t1,t2){
+  try{
+    var d1=new Date(t1.replace(/-/g,"/"));if(isNaN(d1))return "";
+    var d2=t2?new Date(t2.replace(/-/g,"/")):new Date();
+    var ms=Math.max(0,d2-d1);
+    return Math.floor(ms/86400000);
+  }catch(e){return "";}
+}
 function assetTag(s){
   var m={available:["在库","tag-green"],in_use:["已领用","tag-blue"],repairing:["维修中","tag-orange"],scrapped:["已报废","tag-red"],deleted:["已删除","tag-gray"],shipped:["外寄中","tag-purple"]};
   var v=m[s]||[s,"tag-gray"];
@@ -1612,19 +1621,22 @@ async function renderAssetTable(){
     if(a.status==="available"){
       h+="<button class=\"btn btn-sm btn-green\" onclick=\"showDirectTake('"+a.id+"')\">直接领用</button> ";
       h+="<button class=\"btn btn-sm btn-danger\" onclick=\"directDelAsset('"+a.id+"')\">删除</button>";
-    }else if(a.status==="in_use"){
-      if(STATE.user.role!=="member")h+="<button class=\"btn btn-sm btn-green\" onclick=\"returnByAsset('"+a.id+"')\" style=\"margin-right:6px\">归还</button>";
-      if(STATE.user.role!=="member")h+="<button class=\"btn btn-sm btn-blue\" onclick=\"toWarehouseAsset('"+a.id+"')\" style=\"margin-right:6px\">转仓库</button>";
-      if(STATE.user.role!=="member")h+="<button class=\"btn btn-sm btn-danger\" onclick=\"directDelAsset('"+a.id+"')\" style=\"margin-right:6px\">删除</button>";
-      h+="<span style=\"color:var(--faint);font-size:12px\">使用中</span>";
-    }else if(a.status==="repairing"){
+  }else if(a.status==="in_use"){
+    if(STATE.user.role!=="member")h+="<button class=\"btn btn-sm btn-green\" onclick=\"returnByAsset('"+a.id+"')\" style=\"margin-right:6px\">归还</button>";
+    if(STATE.user.role!=="member")h+="<button class=\"btn btn-sm btn-blue\" onclick=\"toWarehouseAsset('"+a.id+"')\" style=\"margin-right:6px\">转仓库</button>";
+    // v13.11：主管/组长也可寄出（与员工我的设备一致）
+    if(STATE.user.role!=="member")h+="<button class=\"btn btn-sm btn-purple\" onclick=\"showShip('"+a.id+"')\" style=\"margin-right:6px\">寄出</button>";
+    if(STATE.user.role!=="member")h+="<button class=\"btn btn-sm btn-danger\" onclick=\"directDelAsset('"+a.id+"')\" style=\"margin-right:6px\">删除</button>";
+    h+="<span style=\"color:var(--faint);font-size:12px\">使用中</span>";
+  }else if(a.status==="repairing"){
       if(STATE.user.role!=="member")h+="<button class=\"btn btn-sm btn-danger\" onclick=\"directDelAsset('"+a.id+"')\" style=\"margin-right:6px\">删除</button>";
       h+="<span style=\"color:var(--faint);font-size:12px\">维修中</span>";
-    }else if(a.status==="shipped"){
-      // v12.11：外寄中——主管/组长可代确认寄回
-      if(STATE.user.role!=="member")h+="<button class=\"btn btn-sm btn-green\" onclick=\"shipReturn('"+a.id+"')\" style=\"margin-right:6px\">确认寄回</button>";
-      h+="<span style=\"color:var(--faint);font-size:12px\">外寄中</span>";
-    }else{
+  }else if(a.status==="shipped"){
+    // v12.11：外寄中——主管/组长可代确认寄回；v13.11：显示已寄出天数
+    if(STATE.user.role!=="member")h+="<button class=\"btn btn-sm btn-green\" onclick=\"shipReturn('"+a.id+"')\" style=\"margin-right:6px\">确认寄回</button>";
+    var shRec=(D.shipments||[]).find(function(x){return x.asset_id===a.id&&x.status==="shipped";});
+    h+="<span style=\"color:var(--faint);font-size:12px\">外寄中"+(shRec&&shRec.ship_time?(" · 已寄出 "+shipDays(shRec.ship_time)+" 天"):"")+"</span>";
+  }else{
       h+="<span style=\"color:var(--faint);font-size:12px\">已报废</span>";
     }
     h+="</td></tr>";
@@ -1820,7 +1832,7 @@ async function renderUses(){
   h+="<div class=\"filter-bar\"><input id=\"useSearch\" placeholder=\"搜索设备/领用人\" oninput=\"renderUseTable()\"></div>";
   h+="<div class=\"card\"><div class=\"c-head\"><h3>领用记录</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th>设备</th><th>领用人</th><th>领用时间</th><th>归还时间</th><th>状态</th><th>操作</th></tr></thead><tbody id=\"useTableBody\"></tbody></table></div></div>";
   h+="<div class=\"card\"><div class=\"c-head\"><h3>转让记录<span style=\"font-size:12px;color:var(--faint);font-weight:400\">（上级仅查看，无需审核）</span></h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th>转让详情</th><th>状态</th><th>发起时间</th><th>处理时间</th></tr></thead><tbody id=\"tfTableBody\"></tbody></table></div></div>";
-  h+="<div class=\"card\"><div class=\"c-head\"><h3>外寄记录<span style=\"font-size:12px;color:var(--faint);font-weight:400\">（寄出/寄回留痕）</span></h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th>设备</th><th>使用人</th><th>寄往</th><th>原因</th><th>单号</th><th>寄出时间</th><th>寄回时间</th></tr></thead><tbody id=\"shTableBody\"></tbody></table></div></div>";
+  h+="<div class=\"card\"><div class=\"c-head\"><h3>外寄记录<span style=\"font-size:12px;color:var(--faint);font-weight:400\">（寄出/寄回留痕）</span></h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th>设备</th><th>使用人</th><th>寄往</th><th>原因</th><th>单号</th><th>寄出时间</th><th>寄回时间</th><th>等待时长</th></tr></thead><tbody id=\"shTableBody\"></tbody></table></div></div>";
   document.getElementById("content").innerHTML=h;
   // v12.9/12.11：打开即标记已读（上级收到通知后查看）
   try{await apiPost("/api/transfers/seen");await apiPost("/api/shipments/seen");refreshBadges();}catch(e){}
@@ -1834,9 +1846,9 @@ async function renderShTable(){
     var data=await apiGet("/api/shipments");
     var h="";
     (data.shipments||[]).forEach(function(s){
-      h+="<tr><td><b>"+esc(s.asset_name)+"</b></td><td>"+esc(s.user_name||"—")+"</td><td>"+esc(s.to_where||"—")+"</td><td>"+esc(s.reason||"—")+"</td><td>"+esc(s.tracking||"—")+"</td><td class=\"num\">"+esc(s.ship_time)+"</td><td class=\"num\">"+(s.return_time?esc(s.return_time):"<span class=\"tag tag-purple\">外寄中</span>")+"</td></tr>";
+      h+="<tr><td><b>"+esc(s.asset_name)+"</b></td><td>"+esc(s.user_name||"—")+"</td><td>"+esc(s.to_where||"—")+"</td><td>"+esc(s.reason||"—")+"</td><td>"+esc(s.tracking||"—")+"</td><td class=\"num\">"+esc(s.ship_time)+"</td><td class=\"num\">"+(s.return_time?esc(s.return_time):"<span class=\"tag tag-purple\">外寄中</span>")+"</td><td class=\"num\">"+(s.return_time?(shipDays(s.ship_time,s.return_time)+" 天"):("已 "+shipDays(s.ship_time)+" 天"))+"</td></tr>";
     });
-    if(!h)h="<tr><td colspan=\"7\" class=\"empty\">暂无外寄记录</td></tr>";
+    if(!h)h="<tr><td colspan=\"8\" class=\"empty\">暂无外寄记录</td></tr>";
     document.getElementById("shTableBody").innerHTML=h;
   }catch(e){}
 }
@@ -2674,7 +2686,7 @@ async function renderWarehouseTable(){
     // v13.2：使用人仅显示实际在用者；在库设备使用人为空（登记人另有列）
     var showUser=myUse?myUse.user_name:"";
     // v13.10：行内"领用"按钮（在库可领，提交申请→主管审核）
-    h+="<tr><td><input type=\"checkbox\" class=\"wh-chk\" value=\""+a.id+"\" "+(canTake?"":"disabled")+" onchange=\"whUpdateSel()\"></td><td><b>"+esc(d.type||"—")+"</b></td><td>"+esc(d.model||"—")+"</td><td>"+esc(d.sn||"—")+"</td><td>"+esc(d.phone||"—")+"</td><td>"+assetTag(a.status)+(canTake?"":"<br><span style=\"font-size:11px;color:var(--faint)\">不可领用</span>")+"</td><td>"+(showUser?"<b>"+esc(showUser)+"</b>":"<span style=\"color:var(--faint)\">—</span>")+"</td><td>"+esc(a.created_by_name)+"</td><td class=\"num\">"+esc(a.created)+"</td><td>"+(canTake?"<button class=\"btn btn-sm btn-green\" onclick=\"whTakeOne('"+a.id+"')\">领用</button>":"<span style=\"color:var(--faint);font-size:12px\">—</span>")+"</td>"+(isMgr?"<td><button class=\"btn btn-sm btn-ghost\" onclick=\"openEditAsset('"+a.id+"',0)\">编辑</button></td>":"")+"</tr>";
+    h+="<tr><td><input type=\"checkbox\" class=\"wh-chk\" value=\""+a.id+"\" "+(canTake?"":"disabled")+" onchange=\"whUpdateSel()\"></td><td><b>"+esc(d.type||"—")+"</b></td><td>"+esc(d.model||"—")+"</td><td>"+esc(d.sn||"—")+"</td><td>"+esc(d.phone||"—")+"</td><td>"+assetTag(a.status)+(a.status==="shipped"?(function(){var shRec=(D.shipments||[]).find(function(x){return x.asset_id===a.id&&x.status==="shipped";});return shRec&&shRec.ship_time?(" · "+shipDays(shRec.ship_time)+" 天"):"";})():"")+(canTake?"":"<br><span style=\"font-size:11px;color:var(--faint)\">不可领用</span>")+"</td><td>"+(showUser?"<b>"+esc(showUser)+"</b>":"<span style=\"color:var(--faint)\">—</span>")+"</td><td>"+esc(a.created_by_name)+"</td><td class=\"num\">"+esc(a.created)+"</td><td>"+(canTake?"<button class=\"btn btn-sm btn-green\" onclick=\"whTakeOne('"+a.id+"')\">领用</button>":"<span style=\"color:var(--faint);font-size:12px\">—</span>")+"</td>"+(isMgr?"<td><button class=\"btn btn-sm btn-ghost\" onclick=\"openEditAsset('"+a.id+"',0)\">编辑</button></td>":"")+"</tr>";
   });
   if(!h)h="<tr><td colspan=\""+(isMgr?11:10)+"\" class=\"empty\">暂无符合条件的手机</td></tr>";
   document.getElementById("whBody").innerHTML=h;
@@ -2792,11 +2804,12 @@ async function renderMyDevList(){
       if(myUse&&myUse.user_id===STATE.user.id)h+="<button class=\"btn btn-sm btn-blue\" onclick=\"showTransfer('"+a.id+"')\">转让</button> ";
       // v12.11：谁都可以寄出（在用手机）
       h+="<button class=\"btn btn-sm btn-purple\" onclick=\"showShip('"+a.id+"')\">寄出</button> ";
-    }else if(a.status==="shipped"){
-      // v12.11：外寄中——使用人自己点寄回
-      if(myUse&&myUse.user_id===STATE.user.id)h+="<button class=\"btn btn-sm btn-green\" onclick=\"shipReturn('"+a.id+"')\">确认寄回</button> ";
-      h+="<span style=\"color:var(--faint);font-size:12px\">已外寄</span>";
-    }else if(a.status==="available"){
+  }else if(a.status==="shipped"){
+    // v12.11：外寄中——使用人自己点寄回；v13.11：显示已寄出天数
+    if(myUse&&myUse.user_id===STATE.user.id)h+="<button class=\"btn btn-sm btn-green\" onclick=\"shipReturn('"+a.id+"')\">确认寄回</button> ";
+    var shRec=(D.shipments||[]).find(function(x){return x.asset_id===a.id&&x.status==="shipped";});
+    h+="<span style=\"color:var(--faint);font-size:12px\">已外寄"+(shRec&&shRec.ship_time?(" · "+shipDays(shRec.ship_time)+" 天"):"")+"</span>";
+  }else if(a.status==="available"){
       h+="<button class=\"btn btn-sm btn-green\" onclick=\"setStatus('"+a.id+"','in_use')\">在用</button> ";
       h+="<button class=\"btn btn-sm btn-orange\" onclick=\"reqRepair('"+a.id+"')\">报修申请</button> ";
     }else{
