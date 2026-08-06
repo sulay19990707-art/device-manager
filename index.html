@@ -1027,13 +1027,13 @@ function postShip(tk,b){
   if(!b.to_where||!String(b.to_where).trim())return[400,{error:"请填写寄给谁/地址"}];
   var a=D.assets.find(function(x){return x.id===b.asset_id;});
   if(!a||a.status==="deleted")return[404,{error:"设备不存在"}];
-  if(a.status!=="in_use"&&a.status!=="shipped")return[400,{error:"只有在用或已外寄的设备可寄出"}];
+  if(a.status!=="in_use"&&a.status!=="shipped"&&a.status!=="available")return[400,{error:"当前状态的设备不可寄出"}];
+  // v13.14：主管/组长可直接寄在库设备；员工只能寄自己正在用的
   var myUse=D.uses.find(function(x){return x.asset_id===a.id&&!x.return_time;});
-  // 员工只能寄自己正在用的；主管/组长可代寄（组长限自己组）
-  if(u.role==="member"){
-    if(!myUse||myUse.user_id!==u.id)return[403,{error:"只能寄自己正在用的手机"}];
-  }else if(u.role==="leader"){
-    if(!inScope(u,a.created_by)&&!(myUse&&inScope(u,myUse.user_id)))return[403,{error:"只能寄自己组的设备"}];
+  if(u.role==="supervisor"||u.role==="leader"){
+    if(u.role==="leader"&&!inScope(u,a.created_by)&&!(myUse&&inScope(u,myUse.user_id)))return[403,{error:"只能寄自己组的设备"}];
+  }else if(u.role==="member"){
+    if(a.status==="available"||!myUse||myUse.user_id!==u.id)return[403,{error:"只能寄自己正在用的手机"}];
   }
   if((D.shipments||[]).find(function(s){return s.asset_id===a.id&&s.status==="shipped";}))return[400,{error:"该手机已在外寄中"}];
   D.shipments=(D.shipments||[]).concat([{
@@ -1060,6 +1060,21 @@ function postShipReturn(tk,id){
   }
   s.status="returned";s.return_time=nowStr();s.return_by=u.name; s.seen=false;
   if(a&&a.status==="shipped")a.status="in_use";
+  sv();return[200,{ok:true}];
+}
+// v13.15：外寄记录内联编辑（寄往/原因/单号/使用人）——主管/组长可改
+function updateShipment(tk,b){
+  var u=verify(tk);if(!u)return[401,{error:"未登录"}];
+  if(u.role!=="supervisor"&&u.role!=="leader")return[403,{error:"无权限"}];
+  var s=(D.shipments||[]).find(function(x){return x.id===b.id;});
+  if(!s)return[404,{error:"外寄记录不存在"}];
+  if(u.role==="leader"&&!inScope(u,s.user_id))return[403,{error:"只能编辑自己组的外寄记录"}];
+  if(b.data){
+    if(b.data.to_where!==undefined)s.to_where=b.data.to_where;
+    if(b.data.reason!==undefined)s.reason=b.data.reason;
+    if(b.data.tracking!==undefined)s.tracking=b.data.tracking;
+    if(b.data.user_name!==undefined)s.user_name=b.data.user_name;
+  }
   sv();return[200,{ok:true}];
 }
 function getShipments(tk){
@@ -1276,6 +1291,7 @@ if(path==="/api/settings"&&method==="POST")return saveSettings(tk,body);
   if(path==="/api/shipments/unseen"&&method==="GET")return getShipUnseen(tk);
   if(path==="/api/shipments/seen"&&method==="POST")return markShipSeen(tk);
   if(path==="/api/shipments"&&method==="POST")return postShip(tk,body);
+  if(path==="/api/shipments/update"&&method==="POST")return updateShipment(tk,body);
   if(pp[1]==="api"&&pp[2]==="shipments"&&pp.length===5&&pp[4]==="return"&&method==="POST")return postShipReturn(tk,pp[3]);
   if(path==="/api/requests/batch_take"&&method==="POST")return batchTake(tk,body);
   if(path==="/api/requests/batch"&&method==="POST")return batchRequest(tk,body);
@@ -1922,9 +1938,15 @@ async function renderUses(){
 async function renderShTable(){
   try{
     var data=await apiGet("/api/shipments");
+    var isMgr=(STATE.user.role==="supervisor"||STATE.user.role==="leader");
     var h="";
     (data.shipments||[]).forEach(function(s){
-      h+="<tr><td><b>"+esc(s.asset_name)+"</b></td><td>"+esc(s.user_name||"—")+"</td><td>"+esc(s.to_where||"—")+"</td><td>"+esc(s.reason||"—")+"</td><td>"+esc(s.tracking||"—")+"</td><td class=\"num\">"+esc(s.ship_time)+"</td><td class=\"num\">"+(s.return_time?esc(s.return_time):"<span class=\"tag tag-purple\">外寄中</span>")+"</td><td class=\"num\">"+(s.return_time?(shipDays(s.ship_time,s.return_time)+" 天"):("已 "+shipDays(s.ship_time)+" 天"))+"</td></tr>";
+      // v13.15：主管/组长可单击编辑 使用人/寄往/原因/单号
+      var ed=function(field,val){
+        if(!isMgr)return esc(val||"—");
+        return "<span style=\"cursor:pointer\" title=\"单击编辑\" onclick=\"shipInlineEdit('"+s.id+"','"+field+"',this)\">"+(esc(val||"—"))+" ✎</span>";
+      };
+      h+="<tr><td><b>"+esc(s.asset_name)+"</b></td><td>"+ed("user_name",s.user_name)+"</td><td>"+ed("to_where",s.to_where)+"</td><td>"+ed("reason",s.reason)+"</td><td>"+ed("tracking",s.tracking)+"</td><td class=\"num\">"+esc(s.ship_time)+"</td><td class=\"num\">"+(s.return_time?esc(s.return_time):"<span class=\"tag tag-purple\">外寄中</span>")+"</td><td class=\"num\">"+(s.return_time?(shipDays(s.ship_time,s.return_time)+" 天"):("已 "+shipDays(s.ship_time)+" 天"))+"</td></tr>";
     });
     if(!h)h="<tr><td colspan=\"8\" class=\"empty\">暂无外寄记录</td></tr>";
     document.getElementById("shTableBody").innerHTML=h;
@@ -1964,13 +1986,39 @@ async function renderShipActive(){
   try{
     var data=await apiGet("/api/shipments");
     var act=data.shipments.filter(function(s){return !s.return_time;});
+    var isMgr=(STATE.user.role==="supervisor"||STATE.user.role==="leader");
     var h="";
     act.forEach(function(s){
-      h+="<tr><td><b>"+esc(s.asset_name)+"</b></td><td>"+esc(s.user_name||"—")+"</td><td>"+esc(s.to_where||"—")+"</td><td>"+esc(s.reason||"—")+"</td><td class=\"num\">"+esc(s.ship_time)+"</td><td class=\"num\">已 "+shipDays(s.ship_time)+" 天</td><td><button class=\"btn btn-sm btn-green\" onclick=\"shipReturn('"+s.asset_id+"')\">确认寄回</button></td></tr>";
+      // v13.15：主管/组长可单击编辑 使用人/寄往/原因/单号
+      var ed=function(field,val){
+        if(!isMgr)return esc(val||"—");
+        return "<span style=\"cursor:pointer\" title=\"单击编辑\" onclick=\"shipInlineEdit('"+s.id+"','"+field+"',this)\">"+(esc(val||"—"))+" ✎</span>";
+      };
+      h+="<tr><td><b>"+esc(s.asset_name)+"</b></td><td>"+ed("user_name",s.user_name)+"</td><td>"+ed("to_where",s.to_where)+"</td><td>"+ed("reason",s.reason)+"</td><td>"+ed("tracking",s.tracking)+"</td><td class=\"num\">"+esc(s.ship_time)+"</td><td class=\"num\">已 "+shipDays(s.ship_time)+" 天</td><td><button class=\"btn btn-sm btn-green\" onclick=\"shipReturn('"+s.asset_id+"')\">确认寄回</button></td></tr>";
     });
-    if(!h)h="<tr><td colspan=\"7\" class=\"empty\">暂无外寄中的手机</td></tr>";
+    if(!h)h="<tr><td colspan=\"8\" class=\"empty\">暂无外寄中的手机</td></tr>";
     body.innerHTML=h;
   }catch(e){body.innerHTML="";}
+}
+// v13.15：外寄记录内联编辑（主管/组长）
+async function shipInlineEdit(id,field,el){
+  try{
+    var data=await apiGet("/api/shipments");
+    var s=(data.shipments||[]).find(function(x){return x.id===id;});
+    if(!s){toast("记录不存在","err");return;}
+    var cur=s[field]||"";
+    var ph=field==="user_name"?"使用人姓名":(field==="to_where"?"寄往地址":(field==="reason"?"原因":"快递单号"));
+    el.innerHTML="<input value=\""+esc(cur)+"\" style=\"width:120px;box-sizing:border-box;padding:4px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:13px\" onkeydown=\"if(event.key==='Enter')shipInlineSave('"+id+"','"+field+"',this.value)\" onblur=\"renderShipManage()\">";
+    var inp=el.querySelector("input");if(inp){inp.focus();inp.select();}
+  }catch(e){toast(e.message,"err");}
+}
+async function shipInlineSave(id,field,value){
+  try{
+    var body={id:id,data:{}};body.data[field]=value;
+    await apiPost("/api/shipments/update",body);
+    toast("已保存");
+  }catch(e){toast(e.message,"err");}
+  renderShipManage();
 }
 async function shipReview(id,act){
   if(act==="reject"&&!confirm("拒绝该寄出申请？"))return;
@@ -2920,7 +2968,7 @@ async function renderWarehouseTable(){
     // v13.2：使用人仅显示实际在用者；在库设备使用人为空（登记人另有列）
     var showUser=myUse?myUse.user_name:"";
     // v13.10：行内"领用"按钮（在库可领，提交申请→主管审核）
-    h+="<tr><td><input type=\"checkbox\" class=\"wh-chk\" value=\""+a.id+"\" "+(canTake?"":"disabled")+" onchange=\"whUpdateSel()\"></td><td><b>"+esc(d.type||"—")+"</b></td><td>"+esc(d.model||"—")+"</td><td>"+esc(d.sn||"—")+"</td><td>"+esc(d.phone||"—")+"</td><td>"+assetTag(a.status)+returnTag(d)+(a.status==="shipped"?(function(){var shRec=(D.shipments||[]).find(function(x){return x.asset_id===a.id&&x.status==="shipped";});return shRec&&shRec.ship_time?(" · "+shipDays(shRec.ship_time)+" 天"):"";})():"")+(canTake?"":"<br><span style=\"font-size:11px;color:var(--faint)\">不可领用</span>")+"</td><td>"+(showUser?"<b>"+esc(showUser)+"</b>":"<span style=\"color:var(--faint)\">—</span>")+"</td><td>"+esc(a.created_by_name)+"</td><td class=\"num\">"+esc(a.created)+"</td><td>"+(canTake?"<button class=\"btn btn-sm btn-green\" onclick=\"whTakeOne('"+a.id+"')\">领用</button>":(a.status==="in_use"?"<button class=\"btn btn-sm btn-purple\" onclick=\"showShip('"+a.id+"')\">寄出</button>":"<span style=\"color:var(--faint);font-size:12px\">—</span>"))+"</td>"+(isMgr?"<td><button class=\"btn btn-sm btn-ghost\" onclick=\"openEditAsset('"+a.id+"',0)\">编辑</button></td>":"")+"</tr>";
+    h+="<tr><td><input type=\"checkbox\" class=\"wh-chk\" value=\""+a.id+"\" "+(canTake?"":"disabled")+" onchange=\"whUpdateSel()\"></td><td><b>"+esc(d.type||"—")+"</b></td><td>"+esc(d.model||"—")+"</td><td>"+esc(d.sn||"—")+"</td><td>"+esc(d.phone||"—")+"</td><td>"+assetTag(a.status)+returnTag(d)+(a.status==="shipped"?(function(){var shRec=(D.shipments||[]).find(function(x){return x.asset_id===a.id&&x.status==="shipped";});return shRec&&shRec.ship_time?(" · "+shipDays(shRec.ship_time)+" 天"):"";})():"")+(canTake?"":"<br><span style=\"font-size:11px;color:var(--faint)\">不可领用</span>")+"</td><td>"+(showUser?"<b>"+esc(showUser)+"</b>":"<span style=\"color:var(--faint)\">—</span>")+"</td><td>"+esc(a.created_by_name)+"</td><td class=\"num\">"+esc(a.created)+"</td><td>"+(canTake?"<button class=\"btn btn-sm btn-green\" onclick=\"whTakeOne('"+a.id+"')\">领用</button>":(a.status==="in_use"?"<button class=\"btn btn-sm btn-purple\" onclick=\"showShip('"+a.id+"')\">寄出</button>":"<span style=\"color:var(--faint);font-size:12px\">—</span>"))+"</td>"+(isMgr?"<td style=\"white-space:nowrap\"><button class=\"btn btn-sm btn-ghost\" onclick=\"openEditAsset('"+a.id+"',0)\">编辑</button> "+(canTake?"<button class=\"btn btn-sm btn-purple\" onclick=\"showShip('"+a.id+"')\">寄出</button>":"")+"</td>":"")+"</tr>";
   });
   if(!h)h="<tr><td colspan=\""+(isMgr?11:10)+"\" class=\"empty\">暂无符合条件的手机</td></tr>";
   document.getElementById("whBody").innerHTML=h;
