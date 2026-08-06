@@ -1356,6 +1356,12 @@ async function renderPersonBar(){
   var bar=document.getElementById("personBar");if(!bar)return;
   try{
     var data=await apiGet("/api/users");
+    var assetsData=await apiGet("/api/assets");
+    var assets=assetsData.assets||[];
+    // v13.2：按登记人统计设备数量（主管/组长也在列表内，均显示）
+    var cntByUser={};
+    assets.forEach(function(a){var c=a.created_by;cntByUser[c]=(cntByUser[c]||0)+1;});
+    var total=assets.length;
     var people=[{id:"",name:"👥 全部"}];
     (data.users||[]).forEach(function(u){
       if(u.role==="leader"){
@@ -1365,9 +1371,15 @@ async function renderPersonBar(){
         people.push({id:u.id,name:u.name});
       }
     });
+    // v13.2：主管/组长自己也要显示（主管/组长也领用设备，getUsers 不返回本人）
+    var me=STATE.user;
+    if(me&&!people.some(function(p){return p.id===me.id;})){
+      people.push({id:me.id,name:me.name+(me.role==="leader"?"（组长）":"")});
+    }
     var h="<span style=\"font-size:12px;color:var(--faint);line-height:28px\">按人查看：</span>";
     people.forEach(function(p){
-      h+="<span class=\"chip"+(ASSET_FILTER===p.id?" on":"")+"\" data-v=\""+p.id+"\" onclick=\"filterByUser(this)\">"+esc(p.name)+"</span>";
+      var n=p.id===""?total:(cntByUser[p.id]||0);
+      h+="<span class=\"chip"+(ASSET_FILTER===p.id?" on":"")+"\" data-v=\""+p.id+"\" onclick=\"filterByUser(this)\">"+esc(p.name)+" ("+n+")</span>";
     });
     bar.innerHTML=h;
   }catch(e){bar.innerHTML="";}
@@ -2037,10 +2049,12 @@ async function renderWarehouse(){
   h+="<div class=\"filter-bar\"><input id=\"whSearch\" placeholder=\"搜索型号/编号/手机号/登记人\" oninput=\"renderWarehouseTable()\" style=\"flex:2\"></div>";
   h+="<div class=\"filter-bar\" style=\"flex-wrap:wrap\" id=\"whModelBar\">加载型号…</div>";
   h+="<div class=\"mb\" style=\"display:flex;gap:10px;align-items:center;flex-wrap:wrap\">";
-  // v12.7：状态切换按钮（全部/在库设备/已领用），默认在库
-  h+="<span class=\"chip"+(WH_STATUS===""?" on":"")+"\" data-v=\"\" onclick=\"filterWhStatus(this)\">全部</span>";
-  h+="<span class=\"chip"+(WH_STATUS==="available"?" on":"")+"\" data-v=\"available\" onclick=\"filterWhStatus(this)\">🏬 在库设备</span>";
-  h+="<span class=\"chip"+(WH_STATUS==="in_use"?" on":"")+"\" data-v=\"in_use\" onclick=\"filterWhStatus(this)\">📱 已领用</span>";
+  // v12.7：状态切换按钮（全部/在库设备/已领用），默认在库；v13.2：显示数量
+  var stAll=assets.length, stAvail=0, stUse=0;
+  assets.forEach(function(a){if(a.status==="available")stAvail++;else if(a.status==="in_use")stUse++;});
+  h+="<span class=\"chip"+(WH_STATUS===""?" on":"")+"\" data-v=\"\" onclick=\"filterWhStatus(this)\">全部 ("+stAll+")</span>";
+  h+="<span class=\"chip"+(WH_STATUS==="available"?" on":"")+"\" data-v=\"available\" onclick=\"filterWhStatus(this)\">🏬 在库设备 ("+stAvail+")</span>";
+  h+="<span class=\"chip"+(WH_STATUS==="in_use"?" on":"")+"\" data-v=\"in_use\" onclick=\"filterWhStatus(this)\">📱 已领用 ("+stUse+")</span>";
   if(isManager){
     h+="<select id=\"whAssignUser\" style=\"height:38px;border:1.5px solid var(--line);border-radius:9px;padding:0 12px;font-size:13px;background:#fff\"><option value=\"\">选择要分配的员工…</option></select>";
     h+="<button class=\"btn btn-green\" id=\"whAssignBtn\" onclick=\"whAssignTake()\">📤 领用给所选员工 (0)</button>";
@@ -2050,7 +2064,7 @@ async function renderWarehouse(){
   document.getElementById("content").innerHTML=h;
   // 加载可分配员工列表（主管=全部员工，组长=自己的员工）
   if(isManager)loadWhAssignUsers();
-  renderWhModelBar();
+  renderWhModelBar(assets);
   renderWarehouseTable();
 }
 async function loadWhAssignUsers(){
@@ -2069,15 +2083,19 @@ async function loadWhAssignUsers(){
     sel.innerHTML=h;
   }catch(e){}
 }
-async function renderWhModelBar(){
+async function renderWhModelBar(assets){
   var bar=document.getElementById("whModelBar");if(!bar)return;
+  if(!assets){try{var dd=await apiGet("/api/warehouse");assets=dd.assets||[];}catch(e){assets=[];}}
   var fields=await apiGet("/api/fields");
   var mf=fields.fields.find(function(f){return f.label==="手机型号";});
   var models=mf&&mf.options?mf.options:[];
+  // v13.2：型号数量按当前状态筛选联动（如在库状态下显示在库的该型号数量）
+  var list=assets.filter(function(a){return !WH_STATUS||a.status===WH_STATUS;});
+  var cnt=function(m){var n=0;list.forEach(function(a){if(a.data&&a.data.model===m)n++;});return n;};
   var h="<span style=\"font-size:12px;color:var(--faint);line-height:28px\">型号：</span>";
-  h+="<span class=\"chip"+(WH_MODEL===""?" on":"")+"\" data-v=\"\" onclick=\"filterWhModel(this)\">全部</span>";
+  h+="<span class=\"chip"+(WH_MODEL===""?" on":"")+"\" data-v=\"\" onclick=\"filterWhModel(this)\">全部 ("+list.length+")</span>";
   models.forEach(function(o){
-    h+="<span class=\"chip"+(WH_MODEL===o?" on":"")+"\" data-v=\""+esc(o)+"\" onclick=\"filterWhModel(this)\">"+esc(o)+"</span>";
+    h+="<span class=\"chip"+(WH_MODEL===o?" on":"")+"\" data-v=\""+esc(o)+"\" onclick=\"filterWhModel(this)\">"+esc(o)+" ("+cnt(o)+")</span>";
   });
   bar.innerHTML=h;
 }
@@ -2161,10 +2179,14 @@ async function renderMyDev(){
 }
 async function renderMyDevTypeBar(){
   var bar=document.getElementById("myDevTypeBar");if(!bar)return;
+  var assetsData=await apiGet("/api/assets");
+  var assets=assetsData.assets||[];
   var types=["","手机","电脑","平板","其他"];
+  // v13.2：类型快捷按钮显示数量
+  var cnt=function(tp){if(tp==="")return assets.length;var n=0;assets.forEach(function(a){if(a.data&&a.data.type===tp)n++;});return n;};
   var h="<span style=\"font-size:12px;color:var(--faint);line-height:28px\">类型：</span>";
   types.forEach(function(tp){
-    h+="<span class=\"chip"+(MYDEV_TYPE===tp?" on":"")+"\" data-v=\""+tp+"\" onclick=\"filterMyDevType(this)\">"+(tp===""?"全部":tp)+"</span>";
+    h+="<span class=\"chip"+(MYDEV_TYPE===tp?" on":"")+"\" data-v=\""+tp+"\" onclick=\"filterMyDevType(this)\">"+(tp===""?"全部":tp)+" ("+cnt(tp)+")</span>";
   });
   bar.innerHTML=h;
 }
