@@ -613,7 +613,7 @@ function getRequests(tk){
 function postRequest(tk,b){
   var u=verify(tk);if(!u)return[401,{error:"未登录"}];
   var type=b.type;
-  if(["take","repair","return","delete","edit","sim_take","sim_return","sim_transfer"].indexOf(type)<0)return[400,{error:"类型不合法"}];
+  if(["take","repair","return","delete","edit","ship","sim_take","sim_return","sim_transfer"].indexOf(type)<0)return[400,{error:"类型不合法"}];
   // v13.7：电话卡领用/退回申请（sim_take/sim_return）；v13.9：转卡（sim_transfer）
   if(type==="sim_take"||type==="sim_return"||type==="sim_transfer"){
     var s=(D.simcards||[]).find(function(x){return x.id===b.sim_id;});
@@ -646,12 +646,19 @@ function postRequest(tk,b){
   if(type==="return"){
     if(a.status!=="in_use")return[400,{error:"设备未在使用中"}];
   }
+  // v13.14：员工寄出申请（需审核）；主管/组长走直接寄出接口
+  if(type==="ship"){
+    if(!b.to_where||!String(b.to_where).trim())return[400,{error:"请填写寄给谁/地址"}];
+    if(a.status!=="in_use")return[400,{error:"只有在用的设备可申请寄出"}];
+    var shipUse=D.uses.find(function(x){return x.asset_id===a.id&&!x.return_time;});
+    if(!shipUse||shipUse.user_id!==u.id)return[403,{error:"只能申请寄自己正在用的手机"}];
+  }
   if(type==="repair"&&!b.desc)return[400,{error:"请描述故障"}];
   if(type==="delete"&&!b.reason)return[400,{error:"请填写删除原因"}];
   if(type==="edit"){if(!b.field||b.new_value===undefined)return[400,{error:"参数不完整"}];}
   // 重复待审检查
   if(D.requests.find(function(x){return x.type===type&&x.asset_id===a.id&&x.user_id===u.id&&x.status==="pending";}))return[400,{error:"已有待审核的同类型申请"}];
-  D.requests.push({id:uid(),type:type,asset_id:a.id,asset_name:assetName(a),user_id:u.id,user_name:u.name,desc:b.desc||"",reason:b.reason||"",note:"",return_reason:b.return_reason||"",return_note:b.return_note||"",status:"pending",created:nowStr(),handled_by:"",handled_at:"",field:b.field||"",new_value:b.new_value||""});
+  D.requests.push({id:uid(),type:type,asset_id:a.id,asset_name:assetName(a),user_id:u.id,user_name:u.name,desc:b.desc||"",reason:b.reason||"",note:"",return_reason:b.return_reason||"",return_note:b.return_note||"",to_where:b.to_where||"",ship_reason:b.ship_reason||"",tracking:b.tracking||"",status:"pending",created:nowStr(),handled_by:"",handled_at:"",field:b.field||"",new_value:b.new_value||""});
   sv();return[200,{ok:true}];
 }
 function approveRequest(tk,id,b){
@@ -685,6 +692,18 @@ function approveRequest(tk,id,b){
     sv();return[200,{ok:true}];
   }
   var a=D.assets.find(function(x){return x.id===r.asset_id;});
+  // v13.14：寄出申请审核（员工寄出需主管/组长同意）
+  if(r.type==="ship"){
+    if(!a||a.status!=="in_use")return[400,{error:"设备状态已变化，无法通过"}];
+    a.status="shipped";
+    D.shipments=(D.shipments||[]).concat([{
+      id:uid(),status:"shipped",asset_id:a.id,asset_name:assetName(a),user_id:r.user_id,user_name:r.user_name,
+      to_where:r.to_where||"",reason:r.ship_reason||r.reason||"",tracking:r.tracking||"",
+      ship_time:nowStr(),return_time:"",return_by:"",note:r.note||"",seen:false
+    }]);
+    r.status="approved";r.handled_by=u.name;r.handled_at=nowStr();
+    sv();return[200,{ok:true}];
+  }
   if(r.type==="take"){
     if(!a||a.status!=="available")return[400,{error:"设备状态已变化，无法通过"}];
     a.status="in_use";
@@ -1287,7 +1306,7 @@ window.fetch=function(url,opts){
 // ============ 前端 ============
 var ROLE_LABELS={supervisor:"主管",leader:"组长",member:"员工"};
 var STATE={user:null},CURRENT_PAGE="",ASSET_FILTER="",MYDEV_TYPE="",WH_MODEL="",WH_STATUS="available",REVIEW_FILTER="",REVIEW_KW="",SIM_FILTER_USER="",SIM_STATUS_FILTER="",SIM_WH_STATUS="在库",SIM_WH_TYPE="";
-var REQ_TYPES={take:["领用","tag-blue"],repair:["报修","tag-orange"],return:["退还","tag-purple"],delete:["删除","tag-red"],edit:["修改","tag-purple"],sim_take:["领卡","tag-blue"],sim_return:["退卡","tag-purple"],sim_transfer:["转卡","tag-purple"]};
+var REQ_TYPES={take:["领用","tag-blue"],repair:["报修","tag-orange"],return:["退还","tag-purple"],delete:["删除","tag-red"],edit:["修改","tag-purple"],ship:["寄出","tag-purple"],sim_take:["领卡","tag-blue"],sim_return:["退卡","tag-purple"],sim_transfer:["转卡","tag-purple"]};
 var REQ_STATUS={pending:["待审核","tag-orange"],approved:["已同意","tag-green"],rejected:["已拒绝","tag-red"],cancelled:["已撤销","tag-gray"]};
 
 async function apiJSON(path,opts){
@@ -1361,6 +1380,7 @@ function renderSidebar(){
     items=[
       {id:"review",icon:"📋",label:"待审申请"},
       {id:"assets",icon:"📦",label:"设备台账"},
+      {id:"ship",icon:"📮",label:"外寄管理"},
       {id:"warehouse",icon:"🏬",label:"仓库手机"},
       {id:"simwh",icon:"📇",label:"仓库电话卡"},
       {id:"sims",icon:"📇",label:"电话卡台账"},
@@ -1374,6 +1394,7 @@ function renderSidebar(){
     items=[
       {id:"review",icon:"📋",label:"待审申请"},
       {id:"assets",icon:"📦",label:"设备台账"},
+      {id:"ship",icon:"📮",label:"外寄管理"},
       {id:"simwh",icon:"📇",label:"仓库电话卡"},
       {id:"sims",icon:"📇",label:"电话卡台账"},
       {id:"warehouse",icon:"🏬",label:"仓库手机"},
@@ -1427,7 +1448,7 @@ async function refreshBadges(){
   }catch(e){}
 }
 
-function navTo(page){CURRENT_PAGE=page;renderSidebar();if(page==="review")renderReview();else if(page==="assets")renderAssets();else if(page==="uses")renderUses();else if(page==="repairs")renderRepairs();else if(page==="stats")renderStats();else if(page==="options")renderOptions();else if(page==="warehouse")renderWarehouse();else if(page==="sims")renderSims();else if(page==="simwh")renderSimWarehouse();else if(page==="members")renderMembers();else if(page==="mydev")renderMyDev();else if(page==="mymain")renderMyMain();}
+function navTo(page){CURRENT_PAGE=page;renderSidebar();if(page==="review")renderReview();else if(page==="assets")renderAssets();else if(page==="ship")renderShipManage();else if(page==="uses")renderUses();else if(page==="repairs")renderRepairs();else if(page==="stats")renderStats();else if(page==="options")renderOptions();else if(page==="warehouse")renderWarehouse();else if(page==="sims")renderSims();else if(page==="simwh")renderSimWarehouse();else if(page==="members")renderMembers();else if(page==="mydev")renderMyDev();else if(page==="mymain")renderMyMain();}
 
 // ===== 标签 =====
 // v13.11：外寄等待时长（寄出时间 → 当前/寄回时间，单位天）
@@ -1481,7 +1502,7 @@ async function renderReviewFilterBar(){
     var pending=data.requests.filter(function(r){return r.status==="pending";});
     var cnt={};
     pending.forEach(function(r){cnt[r.type]=(cnt[r.type]||0)+1;});
-    var defs=[["","全部"],["take","领用"],["sim_take","领卡"],["return","退还"],["sim_return","退卡"],["repair","报修"],["delete","删除"],["edit","修改"]];
+    var defs=[["","全部"],["take","领用"],["sim_take","领卡"],["return","退还"],["sim_return","退卡"],["ship","寄出"],["repair","报修"],["delete","删除"],["edit","修改"]];
     var h="<span style=\"font-size:12px;color:var(--faint);line-height:28px\">分类：</span>";
     defs.forEach(function(d){
       var n=d[0]===""?pending.length:(cnt[d[0]]||0);
@@ -1515,7 +1536,7 @@ async function renderReviewList(){
   }
   if(!pending.length)h+="<div class=\"empty\">暂无待审核申请</div>";
   pending.forEach(function(r){
-    var detail=r.type==="repair"?("故障："+esc(r.desc)):(r.type==="delete"?("原因："+esc(r.reason)):(r.type==="edit"?("修改："+esc(r.field==="model"?"手机型号":"手机编号")+" → "+esc(r.new_value)):(r.type==="sim_transfer"?("转给："+esc(r.to_user_name||"—")):"")));
+    var detail=r.type==="repair"?("故障："+esc(r.desc)):(r.type==="delete"?("原因："+esc(r.reason)):(r.type==="edit"?("修改："+esc(r.field==="model"?"手机型号":"手机编号")+" → "+esc(r.new_value)):(r.type==="sim_transfer"?("转给："+esc(r.to_user_name||"—")):(r.type==="ship"?("寄往："+esc(r.to_where||"—")+(r.ship_reason?" · "+esc(r.ship_reason):"")):""))));
     h+="<div class=\"req-item\" style=\"display:flex;gap:10px;align-items:flex-start\"><input type=\"checkbox\" class=\"req-chk\" value=\""+r.id+"\" style=\"margin-top:5px;flex-shrink:0\" onchange=\"updateSelCount()\"><div style=\"flex:1\"><div class=\"r-top\">"+reqTypeTag(r.type)+"<b>"+esc(r.asset_name)+"</b><span style=\"color:var(--faint);font-size:12px\">"+esc(r.user_name)+" · "+esc(r.created)+"</span></div>"
       +(detail?"<div class=\"r-desc\">"+detail+"</div>":"")
       +"<div class=\"r-actions\"><button class=\"btn btn-sm btn-green\" onclick=\"handleReq('"+r.id+"','approve')\">✔ 同意</button><button class=\"btn btn-sm btn-danger\" onclick=\"handleReq('"+r.id+"','reject')\">✘ 不同意</button></div></div></div>";
@@ -1908,6 +1929,56 @@ async function renderShTable(){
     if(!h)h="<tr><td colspan=\"8\" class=\"empty\">暂无外寄记录</td></tr>";
     document.getElementById("shTableBody").innerHTML=h;
   }catch(e){}
+}
+// v13.14：外寄管理独立页面（主管/组长）——外寄中设备 + 确认寄回 + 全部记录 + 待审寄出申请
+async function renderShipManage(){
+  var h="<div class=\"page-title\">外寄管理</div><div class=\"page-desc\">管理手机寄出/寄回：外寄中手机可确认寄回；员工寄出申请在此审核</div>";
+  // 待审寄出申请
+  h+="<div class=\"card\"><div class=\"c-head\"><h3>待审寄出申请</h3></div><div class=\"c-body\" id=\"shipReviewBody\"></div></div>";
+  // 外寄中手机
+  h+="<div class=\"card\"><div class=\"c-head\"><h3>外寄中手机</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th>设备</th><th>使用人</th><th>寄往</th><th>原因</th><th>寄出时间</th><th>已寄出</th><th>操作</th></tr></thead><tbody id=\"shipActiveBody\"></tbody></table></div></div>";
+  // 全部记录
+  h+="<div class=\"card\"><div class=\"c-head\"><h3>全部外寄记录</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th>设备</th><th>使用人</th><th>寄往</th><th>原因</th><th>单号</th><th>寄出时间</th><th>寄回时间</th><th>等待时长</th></tr></thead><tbody id=\"shTableBody\"></tbody></table></div></div>";
+  document.getElementById("content").innerHTML=h;
+  renderShipReview();
+  renderShipActive();
+  renderShTable();
+}
+async function renderShipReview(){
+  var body=document.getElementById("shipReviewBody");if(!body)return;
+  try{
+    var data=await apiGet("/api/requests");
+    var pend=data.requests.filter(function(r){return r.type==="ship"&&r.status==="pending";});
+    var h="";
+    pend.forEach(function(r){
+      h+="<div class=\"req-item\"><div class=\"r-top\"><b>"+esc(r.user_name)+"</b> 申请寄出 <b>"+esc(r.asset_name)+"</b><span class=\"tag tag-purple\">寄出申请</span><span style=\"flex:1\"></span>"
+        +"<button class=\"btn btn-sm btn-green\" onclick=\"shipReview('"+r.id+"','approve')\">同意</button> <button class=\"btn btn-sm btn-danger\" onclick=\"shipReview('"+r.id+"','reject')\">拒绝</button></div>"
+        +"<div class=\"r-note\">寄往："+esc(r.to_where||"—")+(r.ship_reason?" · 原因："+esc(r.ship_reason):"")+(r.tracking?" · 单号："+esc(r.tracking):"")+(r.desc?"<br>备注："+esc(r.desc):"")+"<br><span style=\"color:var(--faint)\">"+esc(r.created)+"</span></div></div>";
+    });
+    if(!h)h="<div class=\"empty\">暂无待审寄出申请</div>";
+    body.innerHTML=h;
+  }catch(e){body.innerHTML="";}
+}
+async function renderShipActive(){
+  var body=document.getElementById("shipActiveBody");if(!body)return;
+  try{
+    var data=await apiGet("/api/shipments");
+    var act=data.shipments.filter(function(s){return !s.return_time;});
+    var h="";
+    act.forEach(function(s){
+      h+="<tr><td><b>"+esc(s.asset_name)+"</b></td><td>"+esc(s.user_name||"—")+"</td><td>"+esc(s.to_where||"—")+"</td><td>"+esc(s.reason||"—")+"</td><td class=\"num\">"+esc(s.ship_time)+"</td><td class=\"num\">已 "+shipDays(s.ship_time)+" 天</td><td><button class=\"btn btn-sm btn-green\" onclick=\"shipReturn('"+s.asset_id+"')\">确认寄回</button></td></tr>";
+    });
+    if(!h)h="<tr><td colspan=\"7\" class=\"empty\">暂无外寄中的手机</td></tr>";
+    body.innerHTML=h;
+  }catch(e){body.innerHTML="";}
+}
+async function shipReview(id,act){
+  if(act==="reject"&&!confirm("拒绝该寄出申请？"))return;
+  try{
+    await apiPost("/api/requests/"+id,{action:act});
+    toast(act==="approve"?"已同意寄出":"已拒绝");
+    renderShipManage();refreshBadges();
+  }catch(e){toast(e.message,"err");}
 }
 // v12.8：主管查看转让记录（审计留痕，含设备编号+日期）
 async function renderTfTable(){
@@ -2849,7 +2920,7 @@ async function renderWarehouseTable(){
     // v13.2：使用人仅显示实际在用者；在库设备使用人为空（登记人另有列）
     var showUser=myUse?myUse.user_name:"";
     // v13.10：行内"领用"按钮（在库可领，提交申请→主管审核）
-    h+="<tr><td><input type=\"checkbox\" class=\"wh-chk\" value=\""+a.id+"\" "+(canTake?"":"disabled")+" onchange=\"whUpdateSel()\"></td><td><b>"+esc(d.type||"—")+"</b></td><td>"+esc(d.model||"—")+"</td><td>"+esc(d.sn||"—")+"</td><td>"+esc(d.phone||"—")+"</td><td>"+assetTag(a.status)+returnTag(d)+(a.status==="shipped"?(function(){var shRec=(D.shipments||[]).find(function(x){return x.asset_id===a.id&&x.status==="shipped";});return shRec&&shRec.ship_time?(" · "+shipDays(shRec.ship_time)+" 天"):"";})():"")+(canTake?"":"<br><span style=\"font-size:11px;color:var(--faint)\">不可领用</span>")+"</td><td>"+(showUser?"<b>"+esc(showUser)+"</b>":"<span style=\"color:var(--faint)\">—</span>")+"</td><td>"+esc(a.created_by_name)+"</td><td class=\"num\">"+esc(a.created)+"</td><td>"+(canTake?"<button class=\"btn btn-sm btn-green\" onclick=\"whTakeOne('"+a.id+"')\">领用</button>":"<span style=\"color:var(--faint);font-size:12px\">—</span>")+"</td>"+(isMgr?"<td><button class=\"btn btn-sm btn-ghost\" onclick=\"openEditAsset('"+a.id+"',0)\">编辑</button></td>":"")+"</tr>";
+    h+="<tr><td><input type=\"checkbox\" class=\"wh-chk\" value=\""+a.id+"\" "+(canTake?"":"disabled")+" onchange=\"whUpdateSel()\"></td><td><b>"+esc(d.type||"—")+"</b></td><td>"+esc(d.model||"—")+"</td><td>"+esc(d.sn||"—")+"</td><td>"+esc(d.phone||"—")+"</td><td>"+assetTag(a.status)+returnTag(d)+(a.status==="shipped"?(function(){var shRec=(D.shipments||[]).find(function(x){return x.asset_id===a.id&&x.status==="shipped";});return shRec&&shRec.ship_time?(" · "+shipDays(shRec.ship_time)+" 天"):"";})():"")+(canTake?"":"<br><span style=\"font-size:11px;color:var(--faint)\">不可领用</span>")+"</td><td>"+(showUser?"<b>"+esc(showUser)+"</b>":"<span style=\"color:var(--faint)\">—</span>")+"</td><td>"+esc(a.created_by_name)+"</td><td class=\"num\">"+esc(a.created)+"</td><td>"+(canTake?"<button class=\"btn btn-sm btn-green\" onclick=\"whTakeOne('"+a.id+"')\">领用</button>":(a.status==="in_use"?"<button class=\"btn btn-sm btn-purple\" onclick=\"showShip('"+a.id+"')\">寄出</button>":"<span style=\"color:var(--faint);font-size:12px\">—</span>"))+"</td>"+(isMgr?"<td><button class=\"btn btn-sm btn-ghost\" onclick=\"openEditAsset('"+a.id+"',0)\">编辑</button></td>":"")+"</tr>";
   });
   if(!h)h="<tr><td colspan=\""+(isMgr?11:10)+"\" class=\"empty\">暂无符合条件的手机</td></tr>";
   document.getElementById("whBody").innerHTML=h;
@@ -3021,27 +3092,34 @@ async function showShip(assetId){
   var assets=await apiGet("/api/assets");
   var a=assets.assets.find(function(x){return x.id===assetId;});
   if(!a){toast("设备不存在","err");return;}
+  var isMgr=(STATE.user.role==="supervisor"||STATE.user.role==="leader");
+  // v13.14：员工寄出需审核，主管/组长直接寄出
+  var tip=isMgr?"寄出后手机状态变为外寄中，寄回后继续使用（归属不变）":"提交申请后需主管/组长审核同意，审核通过后手机才外寄";
   var reasonOpts=["","寄维修","寄换机","寄外借","寄厂家","其他"].map(function(r){return "<option value=\""+r+"\">"+(r||"选择原因…")+"</option>";}).join("");
   showModal("<h3>寄出手机</h3>"
-    +"<div style=\"font-size:13px;color:var(--sub);margin-bottom:12px\">把 <b>"+esc(assetName(a))+"</b> 寄出，寄回后继续使用（归属不变）</div>"
+    +"<div style=\"font-size:13px;color:var(--sub);margin-bottom:12px\">把 <b>"+esc(assetName(a))+"</b> 寄出，"+(isMgr?"寄回后继续使用（归属不变）":"提交申请后需主管/组长审核同意")+"</div>"
+    +"<div style=\"font-size:12px;color:"+(isMgr?"var(--faint)":"var(--orange)")+";margin-bottom:12px\">"+(isMgr?"":("⚠ "+tip))+"</div>"
     +"<div class=\"field\"><label>寄给谁/地址<span class=\"req\"> *</span></label><input id=\"sp_to\" placeholder=\"如：上海XX维修部 / 张三 收\"></div>"
     +"<div class=\"field\"><label>原因</label><select id=\"sp_reason\">"+reasonOpts+"</select></div>"
     +"<div class=\"field\"><label>快递单号</label><input id=\"sp_tracking\" placeholder=\"选填，如：SF1234567890\"></div>"
     +"<div class=\"field\"><label>备注</label><input id=\"sp_note\" placeholder=\"其他说明（选填）\"></div>"
-    +"<div class=\"m-btns\"><button class=\"btn btn-ghost\" onclick=\"closeModal()\">取消</button><button class=\"btn btn-primary\" onclick=\"submitShip('"+assetId+"')\">确认寄出</button></div><div class=\"err\" id=\"sp_err\"></div>");
+    +"<div class=\"m-btns\"><button class=\"btn btn-ghost\" onclick=\"closeModal()\">取消</button><button class=\"btn btn-primary\" onclick=\"submitShip('"+assetId+"')\">"+(isMgr?"确认寄出":"提交申请")+"</button></div><div class=\"err\" id=\"sp_err\"></div>");
 }
 async function submitShip(assetId){
   var toWhere=document.getElementById("sp_to").value.trim();
   if(!toWhere){document.getElementById("sp_err").textContent="请填写寄给谁/地址";return;}
+  var isMgr=(STATE.user.role==="supervisor"||STATE.user.role==="leader");
+  var reason=document.getElementById("sp_reason").value;
+  var tracking=document.getElementById("sp_tracking").value.trim();
+  var note=document.getElementById("sp_note").value.trim();
   try{
-    await apiPost("/api/shipments",{
-      asset_id:assetId,
-      to_where:toWhere,
-      reason:document.getElementById("sp_reason").value,
-      tracking:document.getElementById("sp_tracking").value.trim(),
-      note:document.getElementById("sp_note").value.trim()
-    });
-    toast("已寄出");closeModal();renderMyDevList();refreshBadges();
+    if(isMgr){
+      await apiPost("/api/shipments",{asset_id:assetId,to_where:toWhere,reason:reason,tracking:tracking,note:note});
+      toast("已寄出");closeModal();if(CURRENT_PAGE==="ship")renderShipManage();else renderAssetTable();
+    }else{
+      await apiPost("/api/requests",{type:"ship",asset_id:assetId,to_where:toWhere,ship_reason:reason,tracking:tracking,desc:note});
+      toast("已提交寄出申请，等待审核");closeModal();renderMyDevList();refreshBadges();
+    }
   }catch(e){document.getElementById("sp_err").textContent=e.message;}
 }
 async function shipReturn(assetId){
@@ -3343,7 +3421,7 @@ async function renderMyReq(){
   var data=await apiGet("/api/requests");
   var h="";
   data.requests.forEach(function(r){
-    var detail=r.type==="repair"?("故障："+esc(r.desc)):(r.type==="delete"?("原因："+esc(r.reason)):(r.type==="edit"?("修改："+esc(r.field==="model"?"手机型号":"手机编号")+" → "+esc(r.new_value)):(r.type==="sim_transfer"?("转给："+esc(r.to_user_name||"—")):"")));
+    var detail=r.type==="repair"?("故障："+esc(r.desc)):(r.type==="delete"?("原因："+esc(r.reason)):(r.type==="edit"?("修改："+esc(r.field==="model"?"手机型号":"手机编号")+" → "+esc(r.new_value)):(r.type==="sim_transfer"?("转给："+esc(r.to_user_name||"—")):(r.type==="ship"?("寄往："+esc(r.to_where||"—")+(r.ship_reason?" · "+esc(r.ship_reason):"")):""))));
     h+="<div class=\"req-item\"><div class=\"r-top\">"+reqTypeTag(r.type)+"<b>"+esc(r.asset_name)+"</b>"+reqStatusTag(r.status)+"<span style=\"color:var(--faint);font-size:12px\">"+esc(r.created)+"</span></div>"
       +(detail?"<div class=\"r-desc\">"+detail+"</div>":"")
       +(r.status!=="pending"?("<div class=\"r-note\">处理人："+esc(r.handled_by||"—")+" · "+esc(r.handled_at||"—")+(r.note?" · "+esc(r.note):"")+"</div>"):"");
