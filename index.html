@@ -190,7 +190,7 @@ var DEFAULT_FIELDS=[
   {id:"phone",label:"手机号码",type:"input",placeholder:"如：13800008888",required:false},
   {id:"card",label:"手机卡类型",type:"select",options:["移动","联通","电信","其他"],required:false},
   {id:"sn",label:"手机编号",type:"input",placeholder:"如：IMEI/SN（不可重复）",required:true},
-  {id:"platform",label:"抖音平台",type:"select",options:["抖音","抖音极速版","抖音火山版"],required:false},
+  {id:"platform",label:"平台",type:"select",options:["抖音","快手","小红书"],required:false},
   {id:"nickname",label:"抖音昵称",type:"input",placeholder:"抖音昵称",required:false},
   {id:"douyin_id",label:"抖音ID",type:"input",placeholder:"如：dy123456",required:false},
   {id:"note",label:"备注",type:"input",placeholder:"其他说明",required:false}
@@ -198,6 +198,11 @@ var DEFAULT_FIELDS=[
 var REMOVE_LABELS=["品牌","颜色","设备编号","设备型号"];
 function mergeFields(d){
   if(!d||!d.fields)return;
+  // v13.3：平台列改名+选项（抖音/快手/小红书）；是否有抖音号改"是/否"快捷选择
+  var pf=d.fields.find(function(x){return x.label==="抖音平台";});
+  if(pf){pf.label="平台";pf.options=["抖音","快手","小红书"];}
+  var yf=d.fields.find(function(x){return x.label==="是否有抖音号"||x.label==="是否有账号";});
+  if(yf){yf.type="select";yf.options=["是","否"];}
   d.fields=d.fields.filter(function(f){return REMOVE_LABELS.indexOf(f.label)<0;});
   var mf=d.fields.find(function(x){return x.label==="手机型号"&&x.type==="input";});
   if(mf){mf.type="select";mf.options=["iPhone 13","iPhone 14","iPhone 15","Mate60","Mate60 Pro","Redmi K70","其他"];mf.placeholder="";}
@@ -262,7 +267,7 @@ function initDB(){
       {id:"model",label:"手机型号",type:"select",options:["iPhone 13","iPhone 14","iPhone 15","Mate60","Mate60 Pro","Redmi K70","其他"],required:true},
       {id:"phone",label:"手机号码",type:"input",placeholder:"如：13800008888",required:true},
       {id:"card",label:"手机卡类型",type:"select",options:["移动","联通","电信","其他"],required:true},
-      {id:"platform",label:"抖音平台",type:"select",options:["抖音","抖音极速版","抖音火山版"],required:false},
+      {id:"platform",label:"平台",type:"select",options:["抖音","快手","小红书"],required:false},
       {id:"nickname",label:"抖音昵称",type:"input",placeholder:"抖音昵称",required:false},
       {id:"douyin_id",label:"抖音ID",type:"input",placeholder:"如：dy123456",required:false},
       {id:"note",label:"备注",type:"input",placeholder:"其他说明",required:false}
@@ -721,7 +726,9 @@ function editAsset(tk,b){
 function editMyAsset(tk,b){
   var u=verify(tk);if(!u)return[401,{error:"未登录"}];
   var a=D.assets.find(function(x){return x.id===b.asset_id;});if(!a)return[404,{error:"设备不存在"}];
-  if(a.created_by!==u.id)return[403,{error:"只能修改自己登记的设备"}];
+  // v13.3：员工可编辑自己登记的 或 自己正在领用的设备
+  var myUse=D.uses.find(function(x){return x.asset_id===b.asset_id&&x.user_id===u.id&&!x.return_time;});
+  if(a.created_by!==u.id&&!myUse)return[403,{error:"只能编辑自己登记或领用的设备"}];
   var lockIds=["手机号码","手机型号","手机编号"].map(findFieldId).filter(Boolean);
   for(var k in b.data){
     if(lockIds.indexOf(k)>=0)continue;
@@ -1403,12 +1410,19 @@ async function renderAssetTable(){
     // v13.2：使用人仅显示实际在用者；退回仓库后在库设备使用人为空
     var showUser=myUse?myUse.user_name:"";
     // v12.6：动态字段列（v13.1：抖音ID/昵称对员工隔离——只显示自己使用中的手机，别人的隐藏）
+    // v13.3：动态列双击可内联编辑（平台/是否有抖音号快捷选择、备注等直接输入）
     var extraTds="";
     var isMine=STATE.user.role==="member"&&myUse&&myUse.user_id===STATE.user.id;
     (fieldsData.fields||[]).forEach(function(f){
       if(["type","model","sn","phone"].indexOf(f.id)>=0)return;
       var hidden=(f.id==="douyin_id"||f.id==="nickname")&&STATE.user.role==="member"&&!isMine;
-      extraTds+="<td>"+(hidden?"<span style=\"color:var(--faint)\">—</span>":(d[f.id]?esc(d[f.id]):"<span style=\"color:var(--faint)\">—</span>"))+"</td>";
+      if(hidden){
+        extraTds+="<td><span style=\"color:var(--faint)\">—</span></td>";
+      }else{
+        var fv=d[f.id];
+        var ft=(f.type==="select"?"select":"input");
+        extraTds+="<td title=\"双击编辑\" ondblclick=\"inlineEdit('"+a.id+"','"+f.id+"','"+ft+"',this)\" style=\"cursor:pointer\">"+(fv?esc(fv):"<span style=\"color:var(--faint)\">—</span>")+"</td>";
+      }
     });
     // v12.4：设备/型号/编号/手机号独立列
     h+="<tr><td><b>"+esc(d.type||"—")+"</b></td><td>"+esc(d.model||"—")+"</td><td>"+esc(d.sn||"—")+" <button class=\"link-btn\" onclick=\"showScanModal('"+a.id+"')\" title=\"扫码登记抖音账号\">📷</button></td><td>"+esc(d.phone||"—")+"</td>"+extraTds+"<td><button class=\"link-btn\" onclick=\"filterByUser(this)\" data-v=\""+a.created_by+"\">"+esc(a.created_by_name)+"</button></td><td>"+(showUser?"<b>"+esc(showUser)+"</b>":"<span style=\"color:var(--faint)\">—</span>")+"</td><td>"+assetTag(a.status)+"</td><td class=\"num\">"+esc(a.created)+"</td><td>";
@@ -1436,6 +1450,42 @@ async function renderAssetTable(){
   var extraCnt=fieldsData.fields?fieldsData.fields.filter(function(f){return ["type","model","sn","phone"].indexOf(f.id)<0;}).length:0;
   if(!h)h="<tr><td colspan=\""+(9+extraCnt)+"\" class=\"empty\">暂无设备</td></tr>";
   document.getElementById("assetTableBody").innerHTML=h;
+}
+// ===== v13.3：台账双击内联编辑（平台/是否有抖音号快捷选择、备注等直接输入）=====
+async function inlineEdit(assetId, fieldId, type, td){
+  try{
+    var fieldsData=await apiGet("/api/fields");
+    var f=(fieldsData.fields||[]).find(function(x){return x.id===fieldId;});
+    var assetsData=await apiGet("/api/assets");
+    var a=assetsData.assets.find(function(x){return x.id===assetId;});
+    if(!a){toast("设备不存在","err");return;}
+    var cur=(a.data&&a.data[fieldId])||"";
+    var html="";
+    if(type==="select"&&f&&f.options&&f.options.length){
+      var chips="";
+      (f.options||[]).forEach(function(o){
+        chips+="<span class=\"chip"+(cur===o?" on":"")+"\" data-v=\""+esc(o)+"\" onclick=\"inlineSave('"+assetId+"','"+fieldId+"','"+esc(o)+"')\">"+esc(o)+"</span>";
+      });
+      html="<div class=\"chip-row\" style=\"white-space:nowrap\">"+chips+"</div>";
+    }else{
+      html="<input value=\""+esc(cur)+"\" style=\"width:120px;box-sizing:border-box;padding:4px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:13px\" onkeydown=\"if(event.key==='Enter')inlineSaveInput('"+assetId+"','"+fieldId+"',this.value)\" onblur=\"renderAssetTable()\">";
+    }
+    td.innerHTML=html;
+    var inp=td.querySelector("input");if(inp)inp.focus();
+  }catch(e){toast(e.message,"err");}
+}
+async function inlineSave(assetId, fieldId, value){await doInlineSave(assetId,fieldId,value);}
+async function inlineSaveInput(assetId, fieldId, value){await doInlineSave(assetId,fieldId,value);}
+async function doInlineSave(assetId, fieldId, value){
+  try{
+    var me=STATE.user;
+    var isMgr=(me.role==="supervisor"||me.role==="leader");
+    var url=isMgr?"/api/actions/edit_asset":"/api/actions/edit_my_asset";
+    var body={asset_id:assetId,data:{}};body.data[fieldId]=value;
+    await apiPost(url,body);
+    toast("已保存");
+  }catch(e){toast(e.message,"err");}
+  renderAssetTable();
 }
 function showAddAsset(){
   showModal("<h3>登记设备</h3><div id=\"assetForm\"></div>"
@@ -2060,7 +2110,8 @@ async function renderWarehouse(){
     h+="<button class=\"btn btn-green\" id=\"whAssignBtn\" onclick=\"whAssignTake()\">📤 领用给所选员工 (0)</button>";
   }
   h+="<button class=\"btn btn-primary\" id=\"whTakeBtn\" onclick=\"whBatchTake()\">📥 申请领用所选 (0)</button><span id=\"whSelInfo\" style=\"font-size:13px;color:var(--sub)\"></span></div>";
-  h+="<div class=\"card\"><div class=\"c-head\"><h3>手机列表</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th style=\"width:36px\"><input type=\"checkbox\" id=\"whAll\" onchange=\"whToggleAll(this)\"></th><th>设备</th><th>手机型号</th><th>手机编号</th><th>手机号</th><th>状态</th><th>使用人</th><th>登记人</th><th>登记时间</th></tr></thead><tbody id=\"whBody\"></tbody></table></div></div>";
+  // v13.3：主管/组长可编辑——加操作列
+  h+="<div class=\"card\"><div class=\"c-head\"><h3>手机列表</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th style=\"width:36px\"><input type=\"checkbox\" id=\"whAll\" onchange=\"whToggleAll(this)\"></th><th>设备</th><th>手机型号</th><th>手机编号</th><th>手机号</th><th>状态</th><th>使用人</th><th>登记人</th><th>登记时间</th>"+(isManager?"<th>操作</th>":"")+"</tr></thead><tbody id=\"whBody\"></tbody></table></div></div>";
   document.getElementById("content").innerHTML=h;
   // 加载可分配员工列表（主管=全部员工，组长=自己的员工）
   if(isManager)loadWhAssignUsers();
@@ -2106,6 +2157,7 @@ async function renderWarehouseTable(){
   var data=await apiGet("/api/warehouse");
   var useData=await apiGet("/api/uses");
   var fieldsData=await apiGet("/api/fields");
+  var isMgr=STATE.user.role==="supervisor"||STATE.user.role==="leader";
   var kw=document.getElementById("whSearch")?(document.getElementById("whSearch").value||"").trim():"";
   var mf=WH_MODEL;
   var h="";
@@ -2119,9 +2171,9 @@ async function renderWarehouseTable(){
     // v13.2：使用人仅显示实际在用者；在库设备使用人为空（登记人另有列）
     var showUser=myUse?myUse.user_name:"";
     // v12.4：设备/型号/编号/手机号独立列
-    h+="<tr><td><input type=\"checkbox\" class=\"wh-chk\" value=\""+a.id+"\" "+(canTake?"":"disabled")+" onchange=\"whUpdateSel()\"></td><td><b>"+esc(d.type||"—")+"</b></td><td>"+esc(d.model||"—")+"</td><td>"+esc(d.sn||"—")+"</td><td>"+esc(d.phone||"—")+"</td><td>"+assetTag(a.status)+(canTake?"":"<br><span style=\"font-size:11px;color:var(--faint)\">不可领用</span>")+"</td><td>"+(showUser?"<b>"+esc(showUser)+"</b>":"<span style=\"color:var(--faint)\">—</span>")+"</td><td>"+esc(a.created_by_name)+"</td><td class=\"num\">"+esc(a.created)+"</td></tr>";
+    h+="<tr><td><input type=\"checkbox\" class=\"wh-chk\" value=\""+a.id+"\" "+(canTake?"":"disabled")+" onchange=\"whUpdateSel()\"></td><td><b>"+esc(d.type||"—")+"</b></td><td>"+esc(d.model||"—")+"</td><td>"+esc(d.sn||"—")+"</td><td>"+esc(d.phone||"—")+"</td><td>"+assetTag(a.status)+(canTake?"":"<br><span style=\"font-size:11px;color:var(--faint)\">不可领用</span>")+"</td><td>"+(showUser?"<b>"+esc(showUser)+"</b>":"<span style=\"color:var(--faint)\">—</span>")+"</td><td>"+esc(a.created_by_name)+"</td><td class=\"num\">"+esc(a.created)+"</td>"+(isMgr?"<td><button class=\"btn btn-sm btn-ghost\" onclick=\"openEditAsset('"+a.id+"',0)\">编辑</button></td>":"")+"</tr>";
   });
-  if(!h)h="<tr><td colspan=\"9\" class=\"empty\">暂无符合条件的手机</td></tr>";
+  if(!h)h="<tr><td colspan=\""+(isMgr?10:9)+"\" class=\"empty\">暂无符合条件的手机</td></tr>";
   document.getElementById("whBody").innerHTML=h;
   whUpdateSel();
 }
