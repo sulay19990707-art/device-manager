@@ -1321,7 +1321,7 @@ window.fetch=function(url,opts){
 
 // ============ 前端 ============
 var ROLE_LABELS={supervisor:"主管",leader:"组长",member:"员工"};
-var STATE={user:null},CURRENT_PAGE="",ASSET_FILTER="",MYDEV_TYPE="",WH_MODEL="",WH_STATUS="available",REVIEW_FILTER="",REVIEW_KW="",SIM_FILTER_USER="",SIM_STATUS_FILTER="",SIM_WH_STATUS="在库",SIM_WH_TYPE="";
+var STATE={user:null},CURRENT_PAGE="",ASSET_FILTER="",MYDEV_TYPE="",WH_MODEL="",WH_STATUS="available",REVIEW_FILTER="",REVIEW_KW="",REVIEW_USER="",SIM_FILTER_USER="",SIM_STATUS_FILTER="",SIM_WH_STATUS="在库",SIM_WH_TYPE="";
 var REQ_TYPES={take:["领用","tag-blue"],repair:["报修","tag-orange"],return:["退还","tag-purple"],delete:["删除","tag-red"],edit:["修改","tag-purple"],ship:["寄出","tag-purple"],sim_take:["领卡","tag-blue"],sim_return:["退卡","tag-purple"],sim_transfer:["转卡","tag-purple"]};
 var REQ_STATUS={pending:["待审核","tag-orange"],approved:["已同意","tag-green"],rejected:["已拒绝","tag-red"],cancelled:["已撤销","tag-gray"]};
 
@@ -1501,13 +1501,39 @@ async function renderReview(){
   var data=await apiGet("/api/stats");
   var h="<div class=\"page-title\">待审申请</div><div class=\"page-desc\">审核员工提交的领用 / 报修 / 退还 / 删除申请</div>";
   h+="<div class=\"kpi-row\">"+kpiCard("待审核","#ff9500",data.stats.pendingReqs)+"</div>";
-  // v13.8：搜索 + 分类快捷筛选
+  // v13.8：搜索 + 分类快捷筛选；v13.18：按员工快捷分类
   h+="<div class=\"filter-bar\"><input id=\"rvSearch\" placeholder=\"搜索申请人/设备/卡号\" oninput=\"renderReviewList()\" style=\"flex:2\"></div>";
   h+="<div class=\"filter-bar\" style=\"flex-wrap:wrap\" id=\"rvFilterBar\">加载分类…</div>";
+  h+="<div class=\"filter-bar\" style=\"flex-wrap:wrap\" id=\"rvUserBar\">加载员工…</div>";
   h+="<div class=\"card\"><div class=\"c-head\"><h3>待处理</h3></div><div class=\"c-body\" id=\"reviewBody\"></div></div>";
   h+="<div class=\"card\"><div class=\"c-head\"><h3>已处理记录</h3></div><div class=\"c-body\" id=\"reviewHistory\"></div></div>";
   document.getElementById("content").innerHTML=h;
   renderReviewFilterBar();
+  renderReviewUserBar();
+  renderReviewList();
+}
+// v13.18：待审申请按员工快捷分类（带数量）
+async function renderReviewUserBar(){
+  var bar=document.getElementById("rvUserBar");if(!bar)return;
+  try{
+    var data=await apiGet("/api/requests");
+    var pending=data.requests.filter(function(r){return r.status==="pending";});
+    var cnt={};
+    pending.forEach(function(r){var u=r.user_id;cnt[u]=(cnt[u]||0)+1;});
+    var users={};
+    pending.forEach(function(r){users[r.user_id]=r.user_name||"未知";});
+    var h="<span style=\"font-size:12px;color:var(--faint);line-height:28px\">按员工：</span>";
+    h+="<span class=\"chip"+(REVIEW_USER===""?" on":"")+"\" data-v=\"\" onclick=\"filterReviewUser(this)\">👥 全部 ("+pending.length+")</span>";
+    Object.keys(users).forEach(function(uid){
+      var n=cnt[uid]||0;
+      h+="<span class=\"chip"+(REVIEW_USER===uid?" on":"")+"\" data-v=\""+uid+"\" onclick=\"filterReviewUser(this)\">"+esc(users[uid])+" ("+n+")</span>";
+    });
+    bar.innerHTML=h;
+  }catch(e){bar.innerHTML="";}
+}
+function filterReviewUser(el){
+  REVIEW_USER=el.getAttribute("data-v");
+  renderReviewUserBar();
   renderReviewList();
 }
 // v13.8：待审申请分类快捷筛选（带数量）
@@ -1538,6 +1564,8 @@ async function renderReviewList(){
   var kw=(document.getElementById("rvSearch")?(document.getElementById("rvSearch").value||"").trim():"").toLowerCase();
   var flt=function(r){
     if(REVIEW_FILTER&&r.type!==REVIEW_FILTER)return false;
+    // v13.18：按员工筛选
+    if(REVIEW_USER&&r.user_id!==REVIEW_USER)return false;
     if(kw){
       var hay=(r.user_name||"")+" "+(r.asset_name||"")+" "+(r.desc||"")+" "+(r.reason||"")+" "+(r.new_value||"")+" "+(r.asset_sn||"");
       if(hay.toLowerCase().indexOf(kw)<0)return false;
