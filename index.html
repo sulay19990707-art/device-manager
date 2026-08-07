@@ -786,6 +786,20 @@ function actionSetStatus(tk,b){
   a.status=ns;
   sv();return[200,{ok:true}];
 }
+// v13.31：主管/组长直接报修（台账"维修"按钮）——设备设为维修中 + 维修记录 + 操作日志
+function actionRepairAsset(tk,b){
+  var u=verify(tk);if(!u)return[401,{error:"未登录"}];
+  if(u.role!=="supervisor"&&u.role!=="leader")return[403,{error:"无权限"}];
+  var a=D.assets.find(function(x){return x.id===b.asset_id;});
+  if(!a)return[404,{error:"设备不存在"}];
+  if(u.role==="leader"&&!inScope(u,a.created_by))return[403,{error:"只能操作自己组的设备"}];
+  if(a.status==="repairing")return[400,{error:"该设备已在维修中"}];
+  if(a.status==="deleted"||a.status==="scrapped")return[400,{error:"当前状态不可报修"}];
+  a.status="repairing";
+  D.repairs.push({id:uid(),asset_id:a.id,asset_name:assetName(a),user_id:u.id,user_name:u.name,desc:b.desc||"主管报修",status:"repairing",created:nowStr(),updated:nowStr()});
+  addLog(a.id,"报修","主管直接报修"+(b.desc?"（"+b.desc+"）":""),u.name);
+  sv();return[200,{ok:true}];
+}
 function batchRequest(tk,b){
   var u=verify(tk);if(!u)return[401,{error:"未登录"}];
   if(u.role!=="supervisor"&&u.role!=="leader")return[403,{error:"无权限"}];
@@ -1335,6 +1349,7 @@ function route(method,path,tk,body){
   if(path==="/api/actions/take"&&method==="POST")return actionTake(tk,body);
   if(path==="/api/actions/delete"&&method==="POST")return actionDelete(tk,body);
   if(path==="/api/actions/asset_status"&&method==="POST")return actionSetStatus(tk,body);
+  if(path==="/api/actions/asset_repair"&&method==="POST")return actionRepairAsset(tk,body);
   if(path==="/api/actions/return_asset"&&method==="POST")return actionReturnAsset(tk,body);
   if(path==="/api/actions/edit_asset"&&method==="POST")return editAsset(tk,body);
   if(path==="/api/actions/edit_my_asset"&&method==="POST")return editMyAsset(tk,body);
@@ -1956,6 +1971,8 @@ async function renderAssetTable(){
     var phoneTd=allowPhone?("<td title=\"单击编辑手机号\" onclick=\"inlineEdit('"+a.id+"','phone','input',this)\" style=\"cursor:pointer\">"+(d.phone?esc(d.phone):"<span style=\"color:var(--faint)\">—</span>")+"</td>"):("<td>"+esc(d.phone||"—")+"</td>");
     h+="<tr><td><b>"+esc(d.type||"—")+"</b></td><td>"+esc(d.model||"—")+"</td><td>"+esc(d.sn||"—")+" <button class=\"link-btn\" onclick=\"showScanModal('"+a.id+"')\" title=\"扫码登记抖音账号\">📷</button></td>"+phoneTd+extraTds+"<td><button class=\"link-btn\" onclick=\"filterByUser(this)\" data-v=\""+a.created_by+"\">"+esc(a.created_by_name)+"</button></td><td>"+(showUser?"<b>"+esc(showUser)+"</b>":"<span style=\"color:var(--faint)\">—</span>")+"</td>"+"<td>"+simTag(a)+"</td><td>"+assetTag(a.status)+returnTag(d)+"</td>"+noteTd(d,a)+"<td class=\"num\">"+esc(a.created)+"</td><td>";
     if(STATE.user.role!=="member")h+="<button class=\"btn btn-sm btn-ghost\" onclick=\"openEditAsset('"+a.id+"',0)\" style=\"margin-right:6px\">编辑</button> <button class=\"btn btn-sm btn-ghost\" onclick=\"showAssetHistory('"+a.id+"')\" style=\"margin-right:6px\">📜 历史</button>";
+    // v13.31：主管/组长直接报修（在库/在用/外寄中可报修；维修中/报废/删除不显示）
+    if(STATE.user.role!=="member"&&a.status!=="repairing"&&a.status!=="deleted"&&a.status!=="scrapped")h+="<button class=\"btn btn-sm btn-orange\" onclick=\"showRepairAsset('"+a.id+"')\" style=\"margin-right:6px\">🔧 维修</button>";
     if(a.status==="available"){
       h+="<button class=\"btn btn-sm btn-green\" onclick=\"showDirectTake('"+a.id+"')\">直接领用</button> ";
       h+="<button class=\"btn btn-sm btn-danger\" onclick=\"directDelAsset('"+a.id+"')\">删除</button>";
@@ -2173,6 +2190,19 @@ async function saveEditAsset(id,isMember){
       renderAssetTable();
     }
   }catch(e){document.getElementById("a_err").textContent=e.message;}
+}
+// v13.31：主管/组长直接报修（台账"🔧 维修"按钮，免审核）
+function showRepairAsset(id){
+  showModal("<h3>🔧 报修</h3><div style=\"font-size:14px;color:var(--sub);margin-bottom:10px\">主管直接将该设备设为维修中（无需审核）</div>"
+    +"<div class=\"field\"><label>故障描述<span style=\"font-size:11px;color:var(--faint)\">（可留空）</span></label><input id=\"ra_desc\" placeholder=\"如：屏幕损坏、无法开机…\"></div>"
+    +"<div class=\"m-btns\"><button class=\"btn btn-ghost\" onclick=\"closeModal()\">取消</button><button class=\"btn btn-orange\" onclick=\"submitRepairAsset('"+id+"')\">确认报修</button></div><div class=\"err\" id=\"ra_err\"></div>");
+}
+async function submitRepairAsset(id){
+  var desc=document.getElementById("ra_desc").value.trim();
+  try{
+    await apiPost("/api/actions/asset_repair",{asset_id:id,desc:desc});
+    toast("已设为维修中");closeModal();renderAssetTable();refreshBadges();
+  }catch(e){document.getElementById("ra_err").textContent=e.message;}
 }
 // 主管直接领用/删除
 async function showDirectTake(id){
@@ -3442,7 +3472,7 @@ async function renderWarehouseTable(){
     // v13.2：使用人仅显示实际在用者；在库设备使用人为空（登记人另有列）
     var showUser=myUse?myUse.user_name:"";
     // v13.10：行内"领用"按钮（在库可领，提交申请→主管审核）
-    h+="<tr><td><input type=\"checkbox\" class=\"wh-chk\" value=\""+a.id+"\" "+(canTake?"":"disabled")+" onchange=\"whUpdateSel()\"></td><td><b>"+esc(d.type||"—")+"</b></td><td>"+esc(d.model||"—")+"</td><td>"+esc(d.sn||"—")+"</td><td>"+esc(d.phone||"—")+"</td><td>"+whPlatChips(a)+"</td><td>"+assetTag(a.status)+returnTag(d)+(a.status==="shipped"?(function(){var shRec=(D.shipments||[]).find(function(x){return x.asset_id===a.id&&x.status==="shipped";});return shRec&&shRec.ship_time?(" · "+shipDays(shRec.ship_time)+" 天"):"";})():"")+(canTake?"":"<br><span style=\"font-size:11px;color:var(--faint)\">不可领用</span>")+"</td>"+noteTd(d,a)+"<td>"+(showUser?"<b>"+esc(showUser)+"</b>":"<span style=\"color:var(--faint)\">—</span>")+"</td><td>"+simTag(a)+"</td><td>"+esc(a.created_by_name)+"</td><td class=\"num\">"+esc(a.created)+"</td><td>"+(canTake?"<button class=\"btn btn-sm btn-green\" onclick=\"whTakeOne('"+a.id+"')\">领用</button>":(a.status==="in_use"?"<button class=\"btn btn-sm btn-purple\" onclick=\"showShip('"+a.id+"')\">寄出</button>":"<span style=\"color:var(--faint);font-size:12px\">—</span>"))+"</td>"+"<td style=\"white-space:nowrap\"><button class=\"btn btn-sm btn-ghost\" onclick=\"showAssetHistory('"+a.id+"')\">📜 历史</button> <button class=\"btn btn-sm btn-ghost\" onclick=\"openEditAsset('"+a.id+"',"+(isMgr?0:1)+")\">编辑</button> "+(canTake?"<button class=\"btn btn-sm btn-purple\" onclick=\"showShip('"+a.id+"')\">寄出</button>":"")+"</td>"+"</tr>";
+    h+="<tr><td><input type=\"checkbox\" class=\"wh-chk\" value=\""+a.id+"\" "+(canTake?"":"disabled")+" onchange=\"whUpdateSel()\"></td><td><b>"+esc(d.type||"—")+"</b></td><td>"+esc(d.model||"—")+"</td><td>"+esc(d.sn||"—")+"</td><td>"+esc(d.phone||"—")+"</td><td>"+whPlatChips(a)+"</td><td>"+assetTag(a.status)+returnTag(d)+(a.status==="shipped"?(function(){var shRec=(D.shipments||[]).find(function(x){return x.asset_id===a.id&&x.status==="shipped";});return shRec&&shRec.ship_time?(" · "+shipDays(shRec.ship_time)+" 天"):"";})():"")+(canTake?"":"<br><span style=\"font-size:11px;color:var(--faint)\">不可领用</span>")+"</td>"+noteTd(d,a)+"<td>"+(showUser?"<b>"+esc(showUser)+"</b>":"<span style=\"color:var(--faint)\">—</span>")+"</td><td>"+simTag(a)+"</td><td>"+esc(a.created_by_name)+"</td><td class=\"num\">"+esc(a.created)+"</td><td>"+(canTake?"<button class=\"btn btn-sm btn-green\" onclick=\"whTakeOne('"+a.id+"')\">领用</button>":(a.status==="in_use"?"<button class=\"btn btn-sm btn-purple\" onclick=\"showShip('"+a.id+"')\">寄出</button>":"<span style=\"color:var(--faint);font-size:12px\">—</span>"))+"</td>"+"<td style=\"white-space:nowrap\"><button class=\"btn btn-sm btn-ghost\" onclick=\"showAssetHistory('"+a.id+"')\">📜 历史</button> <button class=\"btn btn-sm btn-ghost\" onclick=\"openEditAsset('"+a.id+"',"+(isMgr?0:1)+")\">编辑</button> "+(isMgr&&a.status!=="repairing"&&a.status!=="deleted"&&a.status!=="scrapped"?"<button class=\"btn btn-sm btn-orange\" onclick=\"showRepairAsset('"+a.id+"')\">🔧 维修</button> ":"")+(canTake?"<button class=\"btn btn-sm btn-purple\" onclick=\"showShip('"+a.id+"')\">寄出</button>":"")+"</td>"+"</tr>";
   });
   if(!h)h="<tr><td colspan=\""+(isMgr?11:10)+"\" class=\"empty\">暂无符合条件的手机</td></tr>";
   document.getElementById("whBody").innerHTML=h;
