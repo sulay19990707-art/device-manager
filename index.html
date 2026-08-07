@@ -1573,12 +1573,25 @@ function noteTd(d,a){
 async function noteInlineEdit(assetId, el){
   var cur=(D.assets.find(function(x){return x.id===assetId;})||{}).data;
   var v=cur?cur.note||"":"";
-  el.innerHTML="<input value=\""+esc(v)+"\" style=\"width:120px;box-sizing:border-box;padding:4px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:13px\" onkeydown=\"if(event.key==='Enter')noteInlineSave('"+assetId+"',this.value)\" onblur=\""+(CURRENT_PAGE==="warehouse"?"renderWarehouseTable()":"renderAssetTable()")+"\">";
+  // v13.30：失焦自动保存（点别处即保存）；Enter 也保存；防双触发
+  el.dataset.orig=v;el.dataset.saved="0";
+  el.innerHTML="<input value=\""+esc(v)+"\" style=\"width:120px;box-sizing:border-box;padding:4px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:13px\" onkeydown=\"if(event.key==='Enter')noteInlineBlur('"+assetId+"',this)\" onblur=\"noteInlineBlur('"+assetId+"',this)\">";
   var inp=el.querySelector("input");if(inp){inp.focus();inp.select();}
 }
-async function noteInlineSave(assetId, value){
-  try{await doInlineSave(assetId,"note",value);toast("备注已保存");}
-  catch(e){toast(e.message,"err");}
+async function noteInlineBlur(assetId, inp){
+  var el=inp?inp.parentNode:null;
+  if(!el||el.dataset.saved==="1")return;
+  el.dataset.saved="1";
+  var v=inp.value||"";
+  var orig=el.dataset.orig||"";
+  if(v!==orig){
+    try{await doInlineSave(assetId,"note",v);toast("备注已保存");}
+    catch(e){toast(e.message,"err");}
+  }
+  // 刷新当前页面
+  if(CURRENT_PAGE==="warehouse")renderWarehouseTable();
+  else if(CURRENT_PAGE==="assets")renderAssetTable();
+  else if(CURRENT_PAGE==="mydev")renderMyDevList();
 }
 // v13.23：设备绑定的电话卡标签（手机台账显示"手机卡"列，与电话卡"绑定手机"双向同步）
 function simTag(a){
@@ -3091,12 +3104,21 @@ async function simBindEdit(simId, el){
       if(key)names[key]={id:a.id,name:(d.model||"")+" 编号:"+d.sn};
     });
     // 有重名编号提示
-    var h="<input id=\"sim_bind_sn\" placeholder=\"输入手机编号后回车\" style=\"width:130px;box-sizing:border-box;padding:4px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:13px\" onkeydown=\"if(event.key==='Enter')simBindSave('"+simId+"',this.value)\" onblur=\"renderSimTable()\">";
+    // v13.30：失焦自动保存绑定（点别处即保存）；Enter 也保存
+    var h="<input id=\"sim_bind_sn\" placeholder=\"输入手机编号后回车\" style=\"width:130px;box-sizing:border-box;padding:4px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:13px\" onkeydown=\"if(event.key==='Enter')simBindBlur('"+simId+"',this)\" onblur=\"simBindBlur('"+simId+"',this)\">";
+    el.dataset.saved="0";
     el.innerHTML=h;
     var inp=document.getElementById("sim_bind_sn");
     if(inp){inp.focus();inp.select();}
     window.__simAssets=names;
   }catch(e){toast(e.message,"err");}
+}
+// v13.30：电话卡绑定手机失焦自动保存（点别处即存；防 Enter+blur 双触发）
+async function simBindBlur(simId, inp){
+  var el=inp?inp.parentNode:null;
+  if(el&&el.dataset&&el.dataset.saved==="1")return;
+  if(el)el.dataset.saved="1";
+  await simBindSave(simId, inp?inp.value:"");
 }
 async function simBindSave(simId, snInput){
   var sn=(snInput||"").trim();
