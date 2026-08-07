@@ -1939,8 +1939,8 @@ async function inlineSave(assetId, fieldId, value){await doInlineSave(assetId,fi
 // v13.25：平台多选切换（逗号分隔存储）——员工/主管都可点（员工走 edit_my_asset，可改在库设备）
 async function togglePlatform(assetId, plat){
   try{
-    var assetsData=await apiGet("/api/assets");
-    var a=assetsData.assets.find(function(x){return x.id===assetId;});
+    // v13.26：改用本地 D.assets（apiGet /api/assets 对员工过滤，仓库里别人登记的在库手机查不到）
+    var a=D.assets.find(function(x){return x.id===assetId;});
     if(!a){toast("设备不存在","err");return;}
     var cur=(a.data&&a.data.platform)||"";
     var arr=(cur||"").split(",").map(function(x){return x.trim();}).filter(Boolean);
@@ -1960,7 +1960,10 @@ async function doInlineSave(assetId, fieldId, value){
     await apiPost(url,body);
     toast("已保存");
   }catch(e){toast(e.message,"err");}
-  renderAssetTable();
+  // v13.26：按当前页面刷新（员工在仓库页点平台时刷新仓库表，而非台账表）
+  if(CURRENT_PAGE==="warehouse")renderWarehouseTable();
+  else if(CURRENT_PAGE==="assets")renderAssetTable();
+  else if(CURRENT_PAGE==="mydev")renderMyDevList();
 }
 function showAddAsset(){
   showModal("<h3>登记设备</h3><div id=\"assetForm\"></div>"
@@ -2028,10 +2031,10 @@ var EDIT_ORIG=null,EDIT_LOCKIDS=[];
 async function openEditAsset(id,isMember){
   try{
     var data=await apiGet("/api/fields");
-    var assets=await apiGet("/api/assets");
     var permData=await apiGet("/api/settings");
     var allowPhone=permData.settings&&permData.settings.allow_edit_phone;
-    var a=assets.assets.find(function(x){return x.id===id;});
+    // v13.26：改用本地 D.assets（apiGet /api/assets 对员工过滤��仓库在库设备查不到会误报"设备不存在"）
+    var a=D.assets.find(function(x){return x.id===id;});
     if(!a){toast("设备不存在","err");return;}
     EDIT_ORIG=a.data||{};
     var lockLabels=["手机型号","手机编号"];
