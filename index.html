@@ -1405,7 +1405,7 @@ window.fetch=function(url,opts){
 
 // ============ 前端 ============
 var ROLE_LABELS={supervisor:"主管",leader:"组长",member:"员工"};
-var STATE={user:null},CURRENT_PAGE="",ASSET_FILTER="",MYDEV_TYPE="",WH_MODEL="",WH_STATUS="available",WH_REASON="",REVIEW_FILTER="",REVIEW_KW="",REVIEW_USER="",REVIEW_DONE_TYPE="",REVIEW_DONE_USER="",SHIP_FILTER_REASON="",SHIP_FILTER_USER="",SHIP_FILTER_MODEL="",SIM_FILTER_USER="",SIM_STATUS_FILTER="",SIM_WH_STATUS="在库",SIM_WH_TYPE="";
+var STATE={user:null},CURRENT_PAGE="",ASSET_FILTER="",MYDEV_TYPE="",WH_MODEL="",WH_STATUS="available",WH_REASON="",WH_PLATFORM="",ASSET_PLATFORM="",REVIEW_FILTER="",REVIEW_KW="",REVIEW_USER="",REVIEW_DONE_TYPE="",REVIEW_DONE_USER="",SHIP_FILTER_REASON="",SHIP_FILTER_USER="",SHIP_FILTER_MODEL="",SIM_FILTER_USER="",SIM_STATUS_FILTER="",SIM_WH_STATUS="在库",SIM_WH_TYPE="";
 var REQ_TYPES={take:["领用","tag-blue"],repair:["报修","tag-orange"],return:["退还","tag-purple"],delete:["删除","tag-red"],edit:["修改","tag-purple"],ship:["寄出","tag-purple"],sim_take:["领卡","tag-blue"],sim_return:["退卡","tag-purple"],sim_transfer:["转卡","tag-purple"]};
 var REQ_STATUS={pending:["待审核","tag-orange"],approved:["已同意","tag-green"],rejected:["已拒绝","tag-red"],cancelled:["已撤销","tag-gray"]};
 
@@ -1805,6 +1805,8 @@ async function renderAssets(){
   h+="<div class=\"kpi-row\">"+kpiCard("设备总数","#0a84ff",st.total)+kpiCard("在库","#34c759",st.available)+kpiCard("已领用","#7c5cff",st.inUse)+kpiCard("维修中","#ff9500",st.repairing)+"</div>";
   h+="<div class=\"filter-bar\"><select id=\"astFilter\" onchange=\"renderAssetTable()\"><option value=\"\">全部状态</option><option value=\"available\">在库</option><option value=\"in_use\">已领用</option><option value=\"shipped\">外寄中</option><option value=\"repairing\">维修中</option><option value=\"scrapped\">已报废</option></select><input id=\"astSearch\" placeholder=\"搜索名称/编号/登记人\" oninput=\"renderAssetTable()\"><button class=\"btn btn-primary\" onclick=\"showAddAsset()\">＋ 登记设备</button></div>";
   h+="<div class=\"filter-bar\" style=\"flex-wrap:wrap;gap:6px\" id=\"personBar\">加载人员…</div>";
+  // v13.28：平台数量统计（抖音/快手/小红书/空 带数量，点击过滤）
+  h+="<div class=\"filter-bar\" style=\"flex-wrap:wrap\" id=\"assetPlatBar\">加载平台统计…</div>";
   // v12.6：动态字段列（除固定4列外，自定义字段自动成为列）
   var extraThs="";
   (fields.fields||[]).forEach(function(f){
@@ -1814,6 +1816,7 @@ async function renderAssets(){
   h+="<div class=\"card\"><div class=\"c-head\"><h3>设备列表</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th>设备</th><th>手机型号</th><th>手机编号</th><th>手机号</th>"+extraThs+"<th>登记人</th><th>使用人</th><th>手机卡</th><th>状态</th><th>备注</th><th>登记时间</th><th>操作</th></tr></thead><tbody id=\"assetTableBody\"></tbody></table></div></div>";
   document.getElementById("content").innerHTML=h;
   renderPersonBar();
+  renderAssetPlatBar();
   renderAssetTable();
 }
 async function renderPersonBar(){
@@ -1857,6 +1860,32 @@ function filterByUser(el){
   renderPersonBar();
   renderAssetTable();
 }
+// v13.28：台账平台数量统计（抖音/快手/小红书/空 带数量，点击过滤）
+async function renderAssetPlatBar(){
+  var bar=document.getElementById("assetPlatBar");if(!bar)return;
+  try{
+    var data=await apiGet("/api/assets");
+    var assets=data.assets||[];
+    var cnt={抖音:0,快手:0,小红书:0,空:0};
+    assets.forEach(function(a){
+      var p=(a.data&&a.data.platform)||"";
+      if(!p)cnt["空"]++;
+      else (p.split(",").map(function(x){return x.trim();}).filter(Boolean)).forEach(function(pp){if(cnt[pp]!==undefined)cnt[pp]++;});
+    });
+    var defs=[["","全部"],["抖音","抖音"],["快手","快手"],["小红书","小红书"],["空","空"]];
+    var h="<span style=\"font-size:12px;color:var(--faint);line-height:28px\">平台统计：</span>";
+    defs.forEach(function(d){
+      var n=d[0]===""?assets.length:(cnt[d[0]]||0);
+      h+="<span class=\"chip"+(ASSET_PLATFORM===d[0]?" on":"")+"\" data-v=\""+d[0]+"\" onclick=\"filterAssetPlat(this)\">"+d[1]+" ("+n+")</span>";
+    });
+    bar.innerHTML=h;
+  }catch(e){bar.innerHTML="";}
+}
+function filterAssetPlat(el){
+  ASSET_PLATFORM=el.getAttribute("data-v");
+  renderAssetPlatBar();
+  renderAssetTable();
+}
 async function renderAssetTable(){
   var data=await apiGet("/api/assets");
   var useData=await apiGet("/api/uses");
@@ -1867,7 +1896,14 @@ async function renderAssetTable(){
   var kw=document.getElementById("astSearch")?(document.getElementById("astSearch").value||"").trim():"";
   // v13.24：按人查看过滤=当前在用者；退回仓库(无在用)不归任何人，只在全部显示
   var userMatch=function(a){if(!ASSET_FILTER)return true;var u2=(useData.uses||[]).find(function(x){return x.asset_id===a.id&&!x.return_time;});return u2&&u2.user_id===ASSET_FILTER;};
-  var list=data.assets.filter(function(a){return userMatch(a)&&(!f||a.status===f)&&(!kw||(assetName(a)+" "+(a.data&&a.data.sn||"")+" "+(a.data&&a.data.model||"")+" "+(a.data&&a.data.phone||"")+" "+(a.data&&a.data.nickname||"")+" "+(a.data&&a.data.douyin_id||"")+" "+(a.data&&a.data.note||"")+" "+a.created_by_name).indexOf(kw)>=0);});
+  // v13.28：按平台过滤（抖音/快手/小红书 多选匹配，空=未选平台）
+  var platMatch=function(a){
+    if(!ASSET_PLATFORM)return true;
+    var wp=((a.data&&a.data.platform)||"").split(",").map(function(x){return x.trim();}).filter(Boolean);
+    if(ASSET_PLATFORM==="空")return !wp.length;
+    return wp.indexOf(ASSET_PLATFORM)>=0;
+  };
+  var list=data.assets.filter(function(a){return userMatch(a)&&platMatch(a)&&(!f||a.status===f)&&(!kw||(assetName(a)+" "+(a.data&&a.data.sn||"")+" "+(a.data&&a.data.model||"")+" "+(a.data&&a.data.phone||"")+" "+(a.data&&a.data.nickname||"")+" "+(a.data&&a.data.douyin_id||"")+" "+(a.data&&a.data.note||"")+" "+a.created_by_name).indexOf(kw)>=0);});
   var h="";
   list.forEach(function(a){
     var d=a.data||{};
@@ -3243,6 +3279,8 @@ async function renderWarehouse(){
   h+="<div class=\"filter-bar\" style=\"flex-wrap:wrap\" id=\"whModelBar\">加载型号…</div>";
   // v13.19：按退回原因快捷分类（带数量，直接显示非下拉）
   h+="<div class=\"filter-bar\" style=\"flex-wrap:wrap\" id=\"whReasonBar\">加载退回原因…</div>";
+  // v13.28：平台数量统计（抖音/快手/小红书/空 带数量，点击过滤）
+  h+="<div class=\"filter-bar\" style=\"flex-wrap:wrap\" id=\"whPlatBar\">加载平台统计…</div>";
   h+="<div class=\"mb\" style=\"display:flex;gap:10px;align-items:center;flex-wrap:wrap\">";
   // v12.7：状态切换按钮（全部/在库设备/已领用），默认在库；v13.2：显示数量
   var stAll=assets.length, stAvail=0, stUse=0;
@@ -3262,6 +3300,7 @@ async function renderWarehouse(){
   if(isManager)loadWhAssignUsers();
   renderWhModelBar(assets);
   renderWhReasonBar();
+  renderWhPlatBar();
   renderWarehouseTable();
 }
 // v13.19：仓库手机按退回原因快捷分类（带数量，直接显示）
@@ -3288,6 +3327,32 @@ async function renderWhReasonBar(){
 function filterWhReason(el){
   WH_REASON=el.getAttribute("data-v");
   renderWhReasonBar();
+  renderWarehouseTable();
+}
+// v13.28：仓库平台数量统计（抖音/快手/小红书/空，带数量，点击过滤）
+async function renderWhPlatBar(){
+  var bar=document.getElementById("whPlatBar");if(!bar)return;
+  try{
+    var data=await apiGet("/api/warehouse");
+    var assets=data.assets||[];
+    var cnt={抖音:0,快手:0,小红书:0,空:0};
+    assets.forEach(function(a){
+      var p=(a.data&&a.data.platform)||"";
+      if(!p)cnt["空"]++;
+      else (p.split(",").map(function(x){return x.trim();}).filter(Boolean)).forEach(function(pp){if(cnt[pp]!==undefined)cnt[pp]++;});
+    });
+    var defs=[["","全部"],["抖音","抖音"],["快手","快手"],["小红书","小红书"],["空","空"]];
+    var h="<span style=\"font-size:12px;color:var(--faint);line-height:28px\">平台统计：</span>";
+    defs.forEach(function(d){
+      var n=d[0]===""?assets.length:(cnt[d[0]]||0);
+      h+="<span class=\"chip"+(WH_PLATFORM===d[0]?" on":"")+"\" data-v=\""+d[0]+"\" onclick=\"filterWhPlat(this)\">"+d[1]+" ("+n+")</span>";
+    });
+    bar.innerHTML=h;
+  }catch(e){bar.innerHTML="";}
+}
+function filterWhPlat(el){
+  WH_PLATFORM=el.getAttribute("data-v");
+  renderWhPlatBar();
   renderWarehouseTable();
 }
 async function loadWhAssignUsers(){
@@ -3342,6 +3407,12 @@ async function renderWarehouseTable(){
       var rr=d.return_reason||"";
       if(WH_REASON==="__none__"){if(rr)return;}
       else if(rr!==WH_REASON)return;
+    }
+    // v13.28：按平台过滤（抖音/快手/小红书 多选匹配，空=未选平台）
+    if(WH_PLATFORM){
+      var wp=(d.platform||"").split(",").map(function(x){return x.trim();}).filter(Boolean);
+      if(WH_PLATFORM==="空"){if(wp.length)return;}
+      else if(wp.indexOf(WH_PLATFORM)<0)return;
     }
     if(kw&&(assetName(a)+" "+(d.model||"")+" "+(d.phone||"")+" "+(d.sn||"")+" "+(d.note||"")+" "+a.created_by_name).indexOf(kw)<0)return;
     var canTake=a.status==="available";
@@ -3418,7 +3489,7 @@ async function renderMyDev(){
   h+="<div class=\"kpi-row\">"+kpiCard("总手机号","#0a84ff",st.total)+kpiCard("在库","#34c759",st.available)+kpiCard("在用","#7c5cff",st.inUse)+kpiCard("维修中","#ff9500",st.repairing)+"</div>";
   h+="<div class=\"filter-bar\" style=\"flex-wrap:wrap\"><input id=\"myDevSearch\" placeholder=\"搜索型号/编号/手机号\" oninput=\"renderMyDevList()\" style=\"flex:2\"><span id=\"myDevTypeBar\"></span></div>";
   h+="<div class=\"mb\"><button class=\"btn btn-primary\" onclick=\"showAddAsset()\">＋ 登记手机</button> <button class=\"btn btn-orange\" onclick=\"showMyTake()\">🛒 申请领用</button></div>";
-  h+="<div class=\"card\"><div class=\"c-head\"><h3>我的设备</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th>类型</th><th>型号</th><th>手机号</th><th>编号</th><th>抖音账号</th><th>手机卡</th><th>状态/使用人</th><th>备注</th><th>操作</th></tr></thead><tbody id=\"myDevBody\"></tbody></table></div></div>";
+  h+="<div class=\"card\"><div class=\"c-head\"><h3>我的设备</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th>类型</th><th>型号</th><th>手机号</th><th>编号</th><th>抖音账号</th><th>平台</th><th>手机卡</th><th>状态/使用人</th><th>备注</th><th>操作</th></tr></thead><tbody id=\"myDevBody\"></tbody></table></div></div>";
   document.getElementById("content").innerHTML=h;
   renderMyDevTypeBar();
   renderMyDevList();
@@ -3459,7 +3530,7 @@ async function renderMyDevList(){
     }
     // v13.2：使用人仅显示实际在用者；在库设备使用人为空
     var showUser=myUse?myUse.user_name:"";
-    h+="<tr><td>"+esc(d.type||"—")+"</td><td>"+esc(d.model||"—")+"</td><td>"+esc(d.phone||"—")+"</td><td>"+esc(d.sn||"—")+" <button class=\"link-btn\" onclick=\"showScanModal('"+a.id+"')\" title=\"拍照识别抖音账号\">📷</button></td>"+accTd+"<td>"+simTag(a)+"</td><td>"+assetTag(a.status)+returnTag(d)+(showUser?"<br><span style=\"font-size:11px;color:var(--faint)\">使用人："+esc(showUser)+"</span>":"")+(myReq?"<br><span style=\"font-size:11px;color:var(--orange)\">审核中</span>":"")+"</td>"+noteTd(d,a)+"<td style=\"white-space:nowrap\">";
+    h+="<tr><td>"+esc(d.type||"—")+"</td><td>"+esc(d.model||"—")+"</td><td>"+esc(d.phone||"—")+"</td><td>"+esc(d.sn||"—")+" <button class=\"link-btn\" onclick=\"showScanModal('"+a.id+"')\" title=\"拍照识别抖音账号\">📷</button></td>"+accTd+"<td style=\"white-space:nowrap\">"+whPlatChips(a)+"</td><td>"+simTag(a)+"</td><td>"+assetTag(a.status)+returnTag(d)+(showUser?"<br><span style=\"font-size:11px;color:var(--faint)\">使用人："+esc(showUser)+"</span>":"")+(myReq?"<br><span style=\"font-size:11px;color:var(--orange)\">审核中</span>":"")+"</td>"+noteTd(d,a)+"<td style=\"white-space:nowrap\">";
     if(a.status==="in_use"){
       h+="<button class=\"btn btn-sm btn-orange\" onclick=\"reqReturn('"+a.id+"')\">退回仓库</button> ";
       h+="<button class=\"btn btn-sm btn-orange\" onclick=\"reqRepair('"+a.id+"')\">报修申请</button> ";
