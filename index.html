@@ -1321,7 +1321,7 @@ window.fetch=function(url,opts){
 
 // ============ 前端 ============
 var ROLE_LABELS={supervisor:"主管",leader:"组长",member:"员工"};
-var STATE={user:null},CURRENT_PAGE="",ASSET_FILTER="",MYDEV_TYPE="",WH_MODEL="",WH_STATUS="available",REVIEW_FILTER="",REVIEW_KW="",REVIEW_USER="",SIM_FILTER_USER="",SIM_STATUS_FILTER="",SIM_WH_STATUS="在库",SIM_WH_TYPE="";
+var STATE={user:null},CURRENT_PAGE="",ASSET_FILTER="",MYDEV_TYPE="",WH_MODEL="",WH_STATUS="available",WH_REASON="",REVIEW_FILTER="",REVIEW_KW="",REVIEW_USER="",SIM_FILTER_USER="",SIM_STATUS_FILTER="",SIM_WH_STATUS="在库",SIM_WH_TYPE="";
 var REQ_TYPES={take:["领用","tag-blue"],repair:["报修","tag-orange"],return:["退还","tag-purple"],delete:["删除","tag-red"],edit:["修改","tag-purple"],ship:["寄出","tag-purple"],sim_take:["领卡","tag-blue"],sim_return:["退卡","tag-purple"],sim_transfer:["转卡","tag-purple"]};
 var REQ_STATUS={pending:["待审核","tag-orange"],approved:["已同意","tag-green"],rejected:["已拒绝","tag-red"],cancelled:["已撤销","tag-gray"]};
 
@@ -3011,6 +3011,8 @@ async function renderWarehouse(){
   // v12.7：去掉卡类型筛选，只保留搜索 + 型号
   h+="<div class=\"filter-bar\"><input id=\"whSearch\" placeholder=\"搜索型号/编号/手机号/登记人\" oninput=\"renderWarehouseTable()\" style=\"flex:2\"></div>";
   h+="<div class=\"filter-bar\" style=\"flex-wrap:wrap\" id=\"whModelBar\">加载型号…</div>";
+  // v13.19：按退回原因快捷分类（带数量，直接显示非下拉）
+  h+="<div class=\"filter-bar\" style=\"flex-wrap:wrap\" id=\"whReasonBar\">加载退回原因…</div>";
   h+="<div class=\"mb\" style=\"display:flex;gap:10px;align-items:center;flex-wrap:wrap\">";
   // v12.7：状态切换按钮（全部/在库设备/已领用），默认在库；v13.2：显示数量
   var stAll=assets.length, stAvail=0, stUse=0;
@@ -3029,6 +3031,33 @@ async function renderWarehouse(){
   // 加载可分配员工列表（主管=全部员工，组长=自己的员工）
   if(isManager)loadWhAssignUsers();
   renderWhModelBar(assets);
+  renderWhReasonBar();
+  renderWarehouseTable();
+}
+// v13.19：仓库手机按退回原因快捷分类（带数量，直接显示）
+async function renderWhReasonBar(){
+  var bar=document.getElementById("whReasonBar");if(!bar)return;
+  try{
+    var data=await apiGet("/api/warehouse");
+    var optsData=await apiGet("/api/return_opts");
+    var assets=data.assets||[];
+    var opts=optsData.opts||[];
+    var cnt={};
+    assets.forEach(function(a){var r=a.data&&a.data.return_reason;if(r)cnt[r]=(cnt[r]||0)+1;});
+    var withReason=Object.keys(cnt).length;
+    var h="<span style=\"font-size:12px;color:var(--faint);line-height:28px\">退回原因：</span>";
+    h+="<span class=\"chip"+(WH_REASON===""?" on":"")+"\" data-v=\"\" onclick=\"filterWhReason(this)\">全部 ("+assets.length+")</span>";
+    if(withReason)h+="<span class=\"chip"+(WH_REASON==="__none__"?" on":"")+"\" data-v=\"__none__\" onclick=\"filterWhReason(this)\">无退回原因 ("+(assets.length-withReason)+")</span>";
+    opts.forEach(function(o){
+      var n=cnt[o]||0;
+      if(n>0)h+="<span class=\"chip"+(WH_REASON===o?" on":"")+"\" data-v=\""+esc(o)+"\" onclick=\"filterWhReason(this)\">"+esc(o)+" ("+n+")</span>";
+    });
+    bar.innerHTML=h;
+  }catch(e){bar.innerHTML="";}
+}
+function filterWhReason(el){
+  WH_REASON=el.getAttribute("data-v");
+  renderWhReasonBar();
   renderWarehouseTable();
 }
 async function loadWhAssignUsers(){
@@ -3078,6 +3107,12 @@ async function renderWarehouseTable(){
     var d=a.data||{};
     if(mf&&d.model!==mf)return;
     if(WH_STATUS&&a.status!==WH_STATUS)return;
+    // v13.19：按退回原因过滤
+    if(WH_REASON){
+      var rr=d.return_reason||"";
+      if(WH_REASON==="__none__"){if(rr)return;}
+      else if(rr!==WH_REASON)return;
+    }
     if(kw&&(assetName(a)+" "+(d.model||"")+" "+(d.phone||"")+" "+(d.sn||"")+" "+a.created_by_name).indexOf(kw)<0)return;
     var canTake=a.status==="available";
     var myUse=useData.uses.find(function(x){return x.asset_id===a.id&&!x.return_time;});
