@@ -498,8 +498,8 @@ function updateSim(tk,b){
   if(b.data&&b.data.sim_no&&(D.simcards||[]).find(function(x){return x.id!==s.id&&x.data&&x.data.sim_no===b.data.sim_no;}))
     return[400,{error:"卡号已存在，不能重复"}];
   if(b.data){for(var k in b.data)s.data[k]=b.data[k];}
-  // v13.8：修改绑定手机需主管/组长开启权限开关
-  if(b.asset_id!==undefined&&(!D.settings||!D.settings.allow_edit_sim_bind))return[400,{error:"绑定手机修改已锁定，需主管在选项管理开启权限"}];
+  // v13.16：绑定手机——主管/组长可绑所有卡；员工绑自己登记/领用的卡（v13.8 开关对员工仍生效，主管/组长不受限）
+  if(b.asset_id!==undefined&&u.role!=="supervisor"&&u.role!=="leader"&&(!D.settings||!D.settings.allow_edit_sim_bind))return[400,{error:"绑定手机修改已锁定，需主管在选项管理开启权限"}];
   if(b.asset_id!==undefined)s.asset_id=b.asset_id;
   if(b.asset_id){var a=D.assets.find(function(x){return x.id===b.asset_id;});if(!a)return[400,{error:"手机不存在"}];}
   sv();return[200,{ok:true}];
@@ -2687,7 +2687,14 @@ async function renderSimTable(){
     if(myReq)useTd+=" <span class=\"tag tag-orange\" style=\"font-size:11px;padding:2px 8px\">审核中</span>";
     // v13.12：退回原因/备注标签（卡退回后在库，显示在所有页面直到再次领用或被修改）
     var retTag=returnTag(d);
-    h+="<tr><td><b>"+esc(d.sim_no||"—")+"</b></td><td>"+esc(d.sim_type||"—")+"</td>"+extraTds+"<td>"+bindInfo+"</td><td>"+useTd+retTag+"</td><td class=\"num\">"+esc(s.created)+"</td><td style=\"white-space:nowrap\">";
+    // v13.16：绑定手机列可单击编辑（输入手机编号即绑定）——员工可改自己登记/领用的卡，主管/组长可改所有
+    var bindHtml;
+    if(canManage){
+      bindHtml="<span style=\"cursor:pointer\" title=\"单击输入手机编号绑定\" onclick=\"simBindEdit('"+s.id+"',this)\">"+bindInfo+" ✎</span>";
+    }else{
+      bindHtml=bindInfo;
+    }
+    h+="<tr><td><b>"+esc(d.sim_no||"—")+"</b></td><td>"+esc(d.sim_type||"—")+"</td>"+extraTds+"<td>"+bindHtml+"</td><td>"+useTd+retTag+"</td><td class=\"num\">"+esc(s.created)+"</td><td style=\"white-space:nowrap\">";
     // v13.6：员工可编辑/删除自己登记的电话卡（跟登记手机一样的原理）
     if(canManage)h+="<button class=\"btn btn-sm btn-ghost\" onclick=\"showEditSim('"+s.id+"')\">编辑</button>";
     if(canDelete)h+=" <button class=\"btn btn-sm btn-danger\" onclick=\"delSimF('"+s.id+"')\">删除</button>";
@@ -2733,6 +2740,45 @@ async function simInlineSave(simId, fieldId, value){
     var body={id:simId,data:{}};body.data[fieldId]=value;
     await apiPost("/api/sims/update",body);
     toast("已保存");
+  }catch(e){toast(e.message,"err");}
+  renderSimTable();
+}
+// v13.16：电话卡绑定手机——单击输入手机编号即绑定（员工可绑自己登记/领用的卡，主管/组长可绑所有）
+async function simBindEdit(simId, el){
+  try{
+    var assetsData=await apiGet("/api/assets");
+    var assets=assetsData.assets||[];
+    var names={};
+    assets.forEach(function(a){
+      var d=a.data||{};
+      var key=(d.sn||"").trim();
+      if(key)names[key]={id:a.id,name:(d.model||"")+" 编号:"+d.sn};
+    });
+    // 有重名编号提示
+    var h="<input id=\"sim_bind_sn\" placeholder=\"输入手机编号后回车\" style=\"width:130px;box-sizing:border-box;padding:4px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:13px\" onkeydown=\"if(event.key==='Enter')simBindSave('"+simId+"',this.value)\" onblur=\"renderSimTable()\">";
+    el.innerHTML=h;
+    var inp=document.getElementById("sim_bind_sn");
+    if(inp){inp.focus();inp.select();}
+    window.__simAssets=names;
+  }catch(e){toast(e.message,"err");}
+}
+async function simBindSave(simId, snInput){
+  var sn=(snInput||"").trim();
+  if(!sn){toast("请输入手机编号","err");return;}
+  try{
+    // 直接查设备数据，不依赖 __simAssets（更健壮）
+    var assetsData=await apiGet("/api/assets");
+    var assets=assetsData.assets||[];
+    var asset=null;
+    for(var i=0;i<assets.length;i++){
+      var dd=assets[i].data||{};
+      var key=String(dd.sn||"").trim();
+      if(key===sn||key.indexOf(sn)>=0||sn.indexOf(key)>=0){asset=assets[i];break;}
+    }
+    if(!asset){toast("未找到该编号的手机，请核对编号","err");renderSimTable();return;}
+    var body={id:simId,asset_id:asset.id};
+    await apiPost("/api/sims/update",body);
+    toast("已绑定 "+(asset.data&&asset.data.model||"")+" 编号:"+asset.data.sn);
   }catch(e){toast(e.message,"err");}
   renderSimTable();
 }
