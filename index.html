@@ -1405,7 +1405,7 @@ window.fetch=function(url,opts){
 
 // ============ 前端 ============
 var ROLE_LABELS={supervisor:"主管",leader:"组长",member:"员工"};
-var STATE={user:null},CURRENT_PAGE="",ASSET_FILTER="",MYDEV_TYPE="",WH_MODEL="",WH_STATUS="available",WH_REASON="",WH_PLATFORM="",ASSET_PLATFORM="",REVIEW_FILTER="",REVIEW_KW="",REVIEW_USER="",REVIEW_DONE_TYPE="",REVIEW_DONE_USER="",SHIP_FILTER_REASON="",SHIP_FILTER_USER="",SHIP_FILTER_MODEL="",SIM_FILTER_USER="",SIM_STATUS_FILTER="",SIM_WH_STATUS="在库",SIM_WH_TYPE="";
+var STATE={user:null},CURRENT_PAGE="",ASSET_FILTER="",MYDEV_TYPE="",WH_MODEL="",WH_STATUS="available",WH_REASON="",WH_PLATFORM="",ASSET_PLATFORM="",REVIEW_FILTER="",REVIEW_KW="",REVIEW_USER="",REVIEW_DONE_TYPE="",REVIEW_DONE_USER="",SHIP_FILTER_REASON="",SHIP_FILTER_USER="",SHIP_FILTER_MODEL="",SIM_FILTER_USER="",SIM_STATUS_FILTER="",SIM_WH_STATUS="",SIM_WH_TYPE="";
 var REQ_TYPES={take:["领用","tag-blue"],repair:["报修","tag-orange"],return:["退还","tag-purple"],delete:["删除","tag-red"],edit:["修改","tag-purple"],ship:["寄出","tag-purple"],sim_take:["领卡","tag-blue"],sim_return:["退卡","tag-purple"],sim_transfer:["转卡","tag-purple"]};
 var REQ_STATUS={pending:["待审核","tag-orange"],approved:["已同意","tag-green"],rejected:["已拒绝","tag-red"],cancelled:["已撤销","tag-gray"]};
 
@@ -2750,7 +2750,7 @@ async function renderSimWarehouse(){
   }
   h+="<div class=\"mb\"><button class=\"btn btn-primary\" id=\"swTakeBtn\" onclick=\"simWhTake()\">📥 申请领用所选 (0)</button><span id=\"swSelInfo\" style=\"font-size:13px;color:var(--sub)\"></span></div>";
   // v13.10：行内"领用"按钮（登记时间后，提交申请→主管审核）
-  h+="<div class=\"card\"><div class=\"c-head\"><h3>在库电话卡</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th style=\"width:36px\"><input type=\"checkbox\" id=\"swAll\" onchange=\"swToggleAll(this)\"></th><th>卡号</th><th>运营商</th><th>绑定手机</th><th>使用人</th><th>登记时间</th><th>领用</th>"+(isMgr?"<th>操作</th>":"")+"</tr></thead><tbody id=\"swBody\"></tbody></table></div></div>";
+  h+="<div class=\"card\"><div class=\"c-head\"><h3>电话卡列表</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th style=\"width:36px\"><input type=\"checkbox\" id=\"swAll\" onchange=\"swToggleAll(this)\"></th><th>卡号</th><th>运营商</th><th>绑定手机</th><th>使用人</th><th>登记时间</th><th>领用</th>"+(isMgr?"<th>操作</th>":"")+"</tr></thead><tbody id=\"swBody\"></tbody></table></div></div>";
   document.getElementById("content").innerHTML=h;
   if(isMgr)loadSimWhUsers();
   renderSimWhBars();
@@ -3519,6 +3519,8 @@ async function renderMyDevList(){
     if(MYDEV_TYPE&&d.type!==MYDEV_TYPE)return;
     if(kw&&(assetName(a)+" "+(d.model||"")+" "+(d.phone||"")+" "+(d.sn||"")+" "+(d.note||"")).indexOf(kw)<0)return;
     var myUse=uses.uses.find(function(x){return x.asset_id===a.id&&!x.return_time;});
+    // v13.29：我的设备只显示自己当前领用/在用的手机，在库的不显示
+    if(!(myUse&&myUse.user_id===STATE.user.id))return;
     var myReq=reqs.requests.find(function(x){return x.asset_id===a.id&&x.user_id===STATE.user.id&&x.status==="pending";});
     // v13.1：抖音账号列——只有自己正在用的手机才显示（别人的看不到）
     var accTd="<td><span style=\"color:var(--faint)\">—</span></td>";
