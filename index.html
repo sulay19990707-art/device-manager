@@ -1955,6 +1955,8 @@ async function renderShTable(){
 // v13.14：外寄管理独立页面（主管/组长）——外寄中设备 + 确认寄回 + 全部记录 + 待审寄出申请
 async function renderShipManage(){
   var h="<div class=\"page-title\">外寄管理</div><div class=\"page-desc\">管理手机寄出/寄回：外寄中手机可确认寄回；员工寄出申请在此审核</div>";
+  // v13.17：统计区（总数/外寄中/已寄回 + 按原因分类 + 分员工）
+  h+="<div class=\"card\"><div class=\"c-head\"><h3>外寄统计</h3></div><div class=\"c-body\" id=\"shipStatBody\">加载中…</div></div>";
   // 待审寄出申请
   h+="<div class=\"card\"><div class=\"c-head\"><h3>待审寄出申请</h3></div><div class=\"c-body\" id=\"shipReviewBody\"></div></div>";
   // 外寄中手机
@@ -1962,9 +1964,49 @@ async function renderShipManage(){
   // 全部记录
   h+="<div class=\"card\"><div class=\"c-head\"><h3>全部外寄记录</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th>设备</th><th>使用人</th><th>寄往</th><th>原因</th><th>单号</th><th>寄出时间</th><th>寄回时间</th><th>等待时长</th></tr></thead><tbody id=\"shTableBody\"></tbody></table></div></div>";
   document.getElementById("content").innerHTML=h;
+  renderShipStat();
   renderShipReview();
   renderShipActive();
   renderShTable();
+}
+// v13.17：外寄统计（总数/外寄中/已寄回 + 按原因分类 + 分员工）
+async function renderShipStat(){
+  var body=document.getElementById("shipStatBody");if(!body)return;
+  try{
+    var data=await apiGet("/api/shipments");
+    var ships=data.shipments||[];
+    var active=ships.filter(function(s){return !s.return_time;});
+    var returned=ships.length-active.length;
+    // KPI 行
+    var h="<div class=\"kpi-row\">"
+      +kpiCard("外寄总数","#0a84ff",ships.length)
+      +kpiCard("外寄中","#ff9500",active.length)
+      +kpiCard("已寄回","#34c759",returned)
+      +"</div>";
+    // 按原因分类（外寄中）
+    var byReason={};
+    active.forEach(function(s){var r=s.reason||"未填";byReason[r]=(byReason[r]||0)+1;});
+    h+="<div style=\"font-size:13px;font-weight:600;margin:14px 0 8px\">按原因分类（外寄中）</div>";
+    h+="<div style=\"display:flex;flex-wrap:wrap;gap:8px\">";
+    Object.keys(byReason).forEach(function(r){
+      h+="<span class=\"tag tag-purple\" style=\"padding:5px 12px;font-size:13px\">"+esc(r)+"："+byReason[r]+" 台</span>";
+    });
+    if(!Object.keys(byReason).length)h+="<span style=\"color:var(--faint);font-size:12px\">暂无外寄中手机</span>";
+    h+="</div>";
+    // 分员工显示（外寄中）
+    var byUser={};
+    active.forEach(function(s){var u=s.user_name||"未知";byUser[u]=(byUser[u]||0)+1;});
+    h+="<div style=\"font-size:13px;font-weight:600;margin:14px 0 8px\">分员工显示（外寄中）</div>";
+    h+="<div style=\"display:flex;flex-wrap:wrap;gap:8px\">";
+    Object.keys(byUser).forEach(function(u){
+      var cnt=byUser[u];
+      var w=Math.max(30,Math.round(cnt/active.length*100));
+      h+="<span class=\"tag tag-blue\" style=\"padding:5px 12px;font-size:13px\">"+esc(u)+"："+cnt+" 台</span>";
+    });
+    if(!Object.keys(byUser).length)h+="<span style=\"color:var(--faint);font-size:12px\">暂无外寄中手机</span>";
+    h+="</div>";
+    body.innerHTML=h;
+  }catch(e){body.innerHTML="<span style=\"color:var(--faint)\">加载失败</span>";}
 }
 async function renderShipReview(){
   var body=document.getElementById("shipReviewBody");if(!body)return;
