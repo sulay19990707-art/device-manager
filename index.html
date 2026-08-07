@@ -1085,6 +1085,14 @@ function getShipments(tk){
   }else if(u.role==="leader"){
     list=list.filter(function(s){return inScope(u,s.user_id)||inScope(u,s.ship_by_id);});
   }
+  // v13.21：外寄记录补充设备型号/编号（供搜索与快捷分类）
+  list=list.map(function(s){
+    var a=D.assets.find(function(x){return x.id===s.asset_id;});
+    if(a&&a.data){
+      return Object.assign({},s,{asset_model:a.data.model||"",asset_sn:a.data.sn||""});
+    }
+    return s;
+  });
   return[200,{shipments:list}];
 }
 function getShipUnseen(tk){
@@ -1321,7 +1329,7 @@ window.fetch=function(url,opts){
 
 // ============ 前端 ============
 var ROLE_LABELS={supervisor:"主管",leader:"组长",member:"员工"};
-var STATE={user:null},CURRENT_PAGE="",ASSET_FILTER="",MYDEV_TYPE="",WH_MODEL="",WH_STATUS="available",WH_REASON="",REVIEW_FILTER="",REVIEW_KW="",REVIEW_USER="",REVIEW_DONE_TYPE="",REVIEW_DONE_USER="",SIM_FILTER_USER="",SIM_STATUS_FILTER="",SIM_WH_STATUS="在库",SIM_WH_TYPE="";
+var STATE={user:null},CURRENT_PAGE="",ASSET_FILTER="",MYDEV_TYPE="",WH_MODEL="",WH_STATUS="available",WH_REASON="",REVIEW_FILTER="",REVIEW_KW="",REVIEW_USER="",REVIEW_DONE_TYPE="",REVIEW_DONE_USER="",SHIP_FILTER_REASON="",SHIP_FILTER_USER="",SHIP_FILTER_MODEL="",SIM_FILTER_USER="",SIM_STATUS_FILTER="",SIM_WH_STATUS="在库",SIM_WH_TYPE="";
 var REQ_TYPES={take:["领用","tag-blue"],repair:["报修","tag-orange"],return:["退还","tag-purple"],delete:["删除","tag-red"],edit:["修改","tag-purple"],ship:["寄出","tag-purple"],sim_take:["领卡","tag-blue"],sim_return:["退卡","tag-purple"],sim_transfer:["转卡","tag-purple"]};
 var REQ_STATUS={pending:["待审核","tag-orange"],approved:["已同意","tag-green"],rejected:["已拒绝","tag-red"],cancelled:["已撤销","tag-gray"]};
 
@@ -2008,6 +2016,8 @@ async function renderShTable(){
     var isMgr=(STATE.user.role==="supervisor"||STATE.user.role==="leader");
     var h="";
     (data.shipments||[]).forEach(function(s){
+      // v13.21：搜索/分类过滤
+      if(!shipFilterPass(s))return;
       // v13.15：主管/组长可单击编辑 使用人/寄往/原因/单号
       var ed=function(field,val){
         if(!isMgr)return esc(val||"—");
@@ -2024,6 +2034,11 @@ async function renderShipManage(){
   var h="<div class=\"page-title\">外寄管理</div><div class=\"page-desc\">管理手机寄出/寄回：外寄中手机可确认寄回；员工寄出申请在此审核</div>";
   // v13.17：统计区（总数/外寄中/已寄回 + 按原因分类 + 分员工）
   h+="<div class=\"card\"><div class=\"c-head\"><h3>外寄统计</h3></div><div class=\"c-body\" id=\"shipStatBody\">加载中…</div></div>";
+  // v13.21：搜索 + 快捷分类（原因/员工/型号）
+  h+="<div class=\"filter-bar\"><input id=\"shipSearch\" placeholder=\"搜索设备/型号/编号/使用人/寄往\" oninput=\"renderShipActive();renderShTable()\" style=\"flex:2\"></div>";
+  h+="<div class=\"filter-bar\" style=\"flex-wrap:wrap\" id=\"shipReasonBar\">加载原因…</div>";
+  h+="<div class=\"filter-bar\" style=\"flex-wrap:wrap\" id=\"shipUserBar\">加载员工…</div>";
+  h+="<div class=\"filter-bar\" style=\"flex-wrap:wrap\" id=\"shipModelBar\">加载型号…</div>";
   // 待审寄出申请
   h+="<div class=\"card\"><div class=\"c-head\"><h3>待审寄出申请</h3></div><div class=\"c-body\" id=\"shipReviewBody\"></div></div>";
   // 外寄中手机
@@ -2032,9 +2047,44 @@ async function renderShipManage(){
   h+="<div class=\"card\"><div class=\"c-head\"><h3>全部外寄记录</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th>设备</th><th>使用人</th><th>寄往</th><th>原因</th><th>单号</th><th>寄出时间</th><th>寄回时间</th><th>等待时长</th></tr></thead><tbody id=\"shTableBody\"></tbody></table></div></div>";
   document.getElementById("content").innerHTML=h;
   renderShipStat();
+  renderShipFilterBars();
   renderShipReview();
   renderShipActive();
   renderShTable();
+}
+// v13.21：外寄快捷分类栏（原因/员工/型号，带数量）
+async function renderShipFilterBars(){
+  var data=await apiGet("/api/shipments");
+  var ships=data.shipments||[];
+  var cnt=function(field){var m={};ships.forEach(function(s){var v=s[field]||"未填";m[v]=(m[v]||0)+1;});return m;};
+  var buildBar=function(id,label,map,cur,onClick){
+    var bar=document.getElementById(id);if(!bar)return;
+    var h="<span style=\"font-size:12px;color:var(--faint);line-height:28px\">"+label+"：</span>";
+    h+="<span class=\"chip"+(cur===""?" on":"")+"\" data-v=\"\" onclick=\""+onClick+"('',this)\">全部 ("+ships.length+")</span>";
+    Object.keys(map).forEach(function(v){
+      h+="<span class=\"chip"+(cur===v?" on":"")+"\" data-v=\""+esc(v)+"\" onclick=\""+onClick+"('"+esc(v)+"',this)\">"+esc(v)+" ("+map[v]+")</span>";
+    });
+    bar.innerHTML=h;
+  };
+  var reasonMap=cnt("reason"),userMap=cnt("user_name"),modelMap=cnt("asset_model");
+  buildBar("shipReasonBar","原因",reasonMap,SHIP_FILTER_REASON,"filterShipReason");
+  buildBar("shipUserBar","员工",userMap,SHIP_FILTER_USER,"filterShipUser");
+  buildBar("shipModelBar","型号",modelMap,SHIP_FILTER_MODEL,"filterShipModel");
+}
+function filterShipReason(v){SHIP_FILTER_REASON=v;renderShipFilterBars();renderShipActive();renderShTable();}
+function filterShipUser(v){SHIP_FILTER_USER=v;renderShipFilterBars();renderShipActive();renderShTable();}
+function filterShipModel(v){SHIP_FILTER_MODEL=v;renderShipFilterBars();renderShipActive();renderShTable();}
+// v13.21：外寄记录统一过滤（搜索+原因+员工+型号）
+function shipFilterPass(s){
+  if(SHIP_FILTER_REASON&&(s.reason||"")!==SHIP_FILTER_REASON)return false;
+  if(SHIP_FILTER_USER&&(s.user_name||"")!==SHIP_FILTER_USER)return false;
+  if(SHIP_FILTER_MODEL&&(s.asset_model||"")!==SHIP_FILTER_MODEL)return false;
+  var kw=document.getElementById("shipSearch")?(document.getElementById("shipSearch").value||"").trim():"";
+  if(kw){
+    var hay=((s.asset_name||"")+" "+(s.asset_model||"")+" "+(s.asset_sn||"")+" "+(s.user_name||"")+" "+(s.to_where||"")+" "+(s.tracking||"")).toLowerCase();
+    if(hay.indexOf(kw.toLowerCase())<0)return false;
+  }
+  return true;
 }
 // v13.17：外寄统计（总数/外寄中/已寄回 + 按原因分类 + 分员工）
 async function renderShipStat(){
@@ -2094,7 +2144,7 @@ async function renderShipActive(){
   var body=document.getElementById("shipActiveBody");if(!body)return;
   try{
     var data=await apiGet("/api/shipments");
-    var act=data.shipments.filter(function(s){return !s.return_time;});
+    var act=data.shipments.filter(function(s){return !s.return_time&&shipFilterPass(s);});
     var isMgr=(STATE.user.role==="supervisor"||STATE.user.role==="leader");
     var h="";
     act.forEach(function(s){
