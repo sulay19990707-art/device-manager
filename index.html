@@ -885,9 +885,9 @@ function editAsset(tk,b){
 function editMyAsset(tk,b){
   var u=verify(tk);if(!u)return[401,{error:"未登录"}];
   var a=D.assets.find(function(x){return x.id===b.asset_id;});if(!a)return[404,{error:"设备不存在"}];
-  // v13.3：员工可编辑自己登记的 或 自己正在领用的设备
+  // v13.25：员工可编辑自己登记的、自己正在领用的、或所有在库(仓库)设备——帮主管写备注/选平台
   var myUse=D.uses.find(function(x){return x.asset_id===b.asset_id&&x.user_id===u.id&&!x.return_time;});
-  if(a.created_by!==u.id&&!myUse)return[403,{error:"只能编辑自己登记或领用的设备"}];
+  if(a.created_by!==u.id&&!myUse&&a.status!=="available")return[403,{error:"只能编辑自己登记、自己领用的设备或仓库手机"}];
   var lockIds=["手机号码","手机型号","手机编号"].map(findFieldId).filter(Boolean);
   // v13.8：手机号编辑需主管/组长开启权限开关（手机号字段不在 lockIds 但受开关控制）
   if(b.data&&b.data.phone!==undefined&&(!D.settings||!D.settings.allow_edit_phone))return[400,{error:"手机号编辑已锁定，需主管在选项管理开启权限"}];
@@ -1567,6 +1567,17 @@ function simTag(a){
   if(!a||!a.sim_no)return "<span style=\"color:var(--faint)\">—</span>";
   return "<span class=\"tag tag-cyan\" title=\"卡号:"+esc(a.sim_no)+"\">📇 "+esc(a.sim_no)+"</span>";
 }
+// v13.25：仓库行平台多选按钮（抖音/快手/小红书，所有人可点，点选即存）
+function whPlatChips(a){
+  var plats=["抖音","快手","小红书"];
+  var fv=(a.data&&a.data.platform)||"";
+  var chips="";
+  plats.forEach(function(o){
+    var on=(","+fv+",").indexOf(","+o+",")>=0;
+    chips+="<span class=\"chip"+(on?" on":"")+"\" onclick=\"togglePlatform('"+a.id+"','"+o+"')\" style=\"padding:2px 8px;font-size:11px;margin:1px 2px\">"+o+"</span>";
+  });
+  return chips;
+}
 // v13.12：退回原因/备注标签（退回仓库后显示在所有页面，直到再次领用或被修改）
 function returnTag(d){
   if(!d||!d.return_reason)return "";
@@ -1856,10 +1867,13 @@ async function renderAssetTable(){
       var fv=d[f.id];
       var isQuick=(f.type==="select"&&(f.label==="平台"||f.label==="是否有抖音号"));
       if(isQuick&&f.options){
-        // 常驻快捷 chips，点选即保存
+        // v13.25：平台=多选（抖音/快手/小红书 可同时选，逗号分隔）；是否有抖音号=单选
+        var isPlat=f.label==="平台";
         var chips="";
         (f.options||[]).forEach(function(o){
-          chips+="<span class=\"chip"+(fv===o?" on":"")+"\" data-v=\""+esc(o)+"\" onclick=\"inlineSave('"+a.id+"','"+f.id+"','"+esc(o)+"')\" style=\"padding:2px 8px;font-size:11px;margin:1px 2px\">"+esc(o)+"</span>";
+          var on=isPlat?((","+(fv||"")+",").indexOf(","+o+",")>=0):(fv===o);
+          var fn=isPlat?("togglePlatform('"+a.id+"','"+esc(o)+"')"):("inlineSave('"+a.id+"','"+f.id+"','"+esc(o)+"')");
+          chips+="<span class=\"chip"+(on?" on":"")+"\" data-v=\""+esc(o)+"\" onclick=\""+fn+"\" style=\"padding:2px 8px;font-size:11px;margin:1px 2px\">"+esc(o)+"</span>";
         });
         extraTds+="<td style=\"white-space:nowrap\">"+chips+"</td>";
       }else{
@@ -1922,6 +1936,20 @@ async function inlineEdit(assetId, fieldId, type, td){
   }catch(e){toast(e.message,"err");}
 }
 async function inlineSave(assetId, fieldId, value){await doInlineSave(assetId,fieldId,value);}
+// v13.25：平台多选切换（逗号分隔存储）——员工/主管都可点（员工走 edit_my_asset，可改在库设备）
+async function togglePlatform(assetId, plat){
+  try{
+    var assetsData=await apiGet("/api/assets");
+    var a=assetsData.assets.find(function(x){return x.id===assetId;});
+    if(!a){toast("设备不存在","err");return;}
+    var cur=(a.data&&a.data.platform)||"";
+    var arr=(cur||"").split(",").map(function(x){return x.trim();}).filter(Boolean);
+    var idx=arr.indexOf(plat);
+    if(idx>=0)arr.splice(idx,1);else arr.push(plat);
+    var val=arr.join(",");
+    await doInlineSave(assetId,"platform",val);
+  }catch(e){toast(e.message,"err");}
+}
 async function inlineSaveInput(assetId, fieldId, value){await doInlineSave(assetId,fieldId,value);}
 async function doInlineSave(assetId, fieldId, value){
   try{
@@ -3199,7 +3227,7 @@ async function renderWarehouse(){
   }
   h+="<button class=\"btn btn-primary\" id=\"whTakeBtn\" onclick=\"whBatchTake()\">📥 申请领用所选 (0)</button><span id=\"whSelInfo\" style=\"font-size:13px;color:var(--sub)\"></span></div>";
   // v13.10：行内"领用"按钮（登记时间后，点一下提交申请→主管审核）
-  h+="<div class=\"card\"><div class=\"c-head\"><h3>手机列表</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th style=\"width:36px\"><input type=\"checkbox\" id=\"whAll\" onchange=\"whToggleAll(this)\"></th><th>设备</th><th>手机型号</th><th>手机编号</th><th>手机号</th><th>状态</th><th>使用人</th><th>手机卡</th><th>登记人</th><th>登记时间</th><th>领用</th>"+(isManager?"<th>操作</th>":"")+"</tr></thead><tbody id=\"whBody\"></tbody></table></div></div>";
+  h+="<div class=\"card\"><div class=\"c-head\"><h3>手机列表</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th style=\"width:36px\"><input type=\"checkbox\" id=\"whAll\" onchange=\"whToggleAll(this)\"></th><th>设备</th><th>手机型号</th><th>手机编号</th><th>手机号</th><th>平台</th><th>状态</th><th>使用人</th><th>手机卡</th><th>登记人</th><th>登记时间</th><th>领用</th><th>操作</th></tr></thead><tbody id=\"whBody\"></tbody></table></div></div>";
   document.getElementById("content").innerHTML=h;
   // 加载可分配员工列表（主管=全部员工，组长=自己的员工）
   if(isManager)loadWhAssignUsers();
@@ -3292,7 +3320,7 @@ async function renderWarehouseTable(){
     // v13.2：使用人仅显示实际在用者；在库设备使用人为空（登记人另有列）
     var showUser=myUse?myUse.user_name:"";
     // v13.10：行内"领用"按钮（在库可领，提交申请→主管审核）
-    h+="<tr><td><input type=\"checkbox\" class=\"wh-chk\" value=\""+a.id+"\" "+(canTake?"":"disabled")+" onchange=\"whUpdateSel()\"></td><td><b>"+esc(d.type||"—")+"</b></td><td>"+esc(d.model||"—")+"</td><td>"+esc(d.sn||"—")+"</td><td>"+esc(d.phone||"—")+"</td><td>"+assetTag(a.status)+returnTag(d)+(a.status==="shipped"?(function(){var shRec=(D.shipments||[]).find(function(x){return x.asset_id===a.id&&x.status==="shipped";});return shRec&&shRec.ship_time?(" · "+shipDays(shRec.ship_time)+" 天"):"";})():"")+(canTake?"":"<br><span style=\"font-size:11px;color:var(--faint)\">不可领用</span>")+"</td><td>"+(showUser?"<b>"+esc(showUser)+"</b>":"<span style=\"color:var(--faint)\">—</span>")+"</td><td>"+simTag(a)+"</td><td>"+esc(a.created_by_name)+"</td><td class=\"num\">"+esc(a.created)+"</td><td>"+(canTake?"<button class=\"btn btn-sm btn-green\" onclick=\"whTakeOne('"+a.id+"')\">领用</button>":(a.status==="in_use"?"<button class=\"btn btn-sm btn-purple\" onclick=\"showShip('"+a.id+"')\">寄出</button>":"<span style=\"color:var(--faint);font-size:12px\">—</span>"))+"</td>"+(isMgr?"<td style=\"white-space:nowrap\"><button class=\"btn btn-sm btn-ghost\" onclick=\"showAssetHistory('"+a.id+"')\">📜 历史</button> <button class=\"btn btn-sm btn-ghost\" onclick=\"openEditAsset('"+a.id+"',0)\">编辑</button> "+(canTake?"<button class=\"btn btn-sm btn-purple\" onclick=\"showShip('"+a.id+"')\">寄出</button>":"")+"</td>":"")+"</tr>";
+    h+="<tr><td><input type=\"checkbox\" class=\"wh-chk\" value=\""+a.id+"\" "+(canTake?"":"disabled")+" onchange=\"whUpdateSel()\"></td><td><b>"+esc(d.type||"—")+"</b></td><td>"+esc(d.model||"—")+"</td><td>"+esc(d.sn||"—")+"</td><td>"+esc(d.phone||"—")+"</td><td>"+whPlatChips(a)+"</td><td>"+assetTag(a.status)+returnTag(d)+(a.status==="shipped"?(function(){var shRec=(D.shipments||[]).find(function(x){return x.asset_id===a.id&&x.status==="shipped";});return shRec&&shRec.ship_time?(" · "+shipDays(shRec.ship_time)+" 天"):"";})():"")+(canTake?"":"<br><span style=\"font-size:11px;color:var(--faint)\">不可领用</span>")+"</td><td>"+(showUser?"<b>"+esc(showUser)+"</b>":"<span style=\"color:var(--faint)\">—</span>")+"</td><td>"+simTag(a)+"</td><td>"+esc(a.created_by_name)+"</td><td class=\"num\">"+esc(a.created)+"</td><td>"+(canTake?"<button class=\"btn btn-sm btn-green\" onclick=\"whTakeOne('"+a.id+"')\">领用</button>":(a.status==="in_use"?"<button class=\"btn btn-sm btn-purple\" onclick=\"showShip('"+a.id+"')\">寄出</button>":"<span style=\"color:var(--faint);font-size:12px\">—</span>"))+"</td>"+"<td style=\"white-space:nowrap\"><button class=\"btn btn-sm btn-ghost\" onclick=\"showAssetHistory('"+a.id+"')\">📜 历史</button> <button class=\"btn btn-sm btn-ghost\" onclick=\"openEditAsset('"+a.id+"',"+(isMgr?0:1)+")\">编辑</button> "+(canTake?"<button class=\"btn btn-sm btn-purple\" onclick=\"showShip('"+a.id+"')\">寄出</button>":"")+"</td>"+"</tr>";
   });
   if(!h)h="<tr><td colspan=\""+(isMgr?11:10)+"\" class=\"empty\">暂无符合条件的手机</td></tr>";
   document.getElementById("whBody").innerHTML=h;
