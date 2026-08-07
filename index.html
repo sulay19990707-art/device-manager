@@ -1321,7 +1321,7 @@ window.fetch=function(url,opts){
 
 // ============ 前端 ============
 var ROLE_LABELS={supervisor:"主管",leader:"组长",member:"员工"};
-var STATE={user:null},CURRENT_PAGE="",ASSET_FILTER="",MYDEV_TYPE="",WH_MODEL="",WH_STATUS="available",WH_REASON="",REVIEW_FILTER="",REVIEW_KW="",REVIEW_USER="",SIM_FILTER_USER="",SIM_STATUS_FILTER="",SIM_WH_STATUS="在库",SIM_WH_TYPE="";
+var STATE={user:null},CURRENT_PAGE="",ASSET_FILTER="",MYDEV_TYPE="",WH_MODEL="",WH_STATUS="available",WH_REASON="",REVIEW_FILTER="",REVIEW_KW="",REVIEW_USER="",REVIEW_DONE_TYPE="",REVIEW_DONE_USER="",SIM_FILTER_USER="",SIM_STATUS_FILTER="",SIM_WH_STATUS="在库",SIM_WH_TYPE="";
 var REQ_TYPES={take:["领用","tag-blue"],repair:["报修","tag-orange"],return:["退还","tag-purple"],delete:["删除","tag-red"],edit:["修改","tag-purple"],ship:["寄出","tag-purple"],sim_take:["领卡","tag-blue"],sim_return:["退卡","tag-purple"],sim_transfer:["转卡","tag-purple"]};
 var REQ_STATUS={pending:["待审核","tag-orange"],approved:["已同意","tag-green"],rejected:["已拒绝","tag-red"],cancelled:["已撤销","tag-gray"]};
 
@@ -1506,12 +1506,45 @@ async function renderReview(){
   h+="<div class=\"filter-bar\" style=\"flex-wrap:wrap\" id=\"rvFilterBar\">加载分类…</div>";
   h+="<div class=\"filter-bar\" style=\"flex-wrap:wrap\" id=\"rvUserBar\">加载员工…</div>";
   h+="<div class=\"card\"><div class=\"c-head\"><h3>待处理</h3></div><div class=\"c-body\" id=\"reviewBody\"></div></div>";
+  // v13.20：已处理记录独立快捷分类（类型+员工，统计已处理数量）
+  h+="<div class=\"filter-bar\" style=\"flex-wrap:wrap;margin-bottom:0\" id=\"rvDoneBar\">加载已处理分类…</div>";
   h+="<div class=\"card\"><div class=\"c-head\"><h3>已处理记录</h3></div><div class=\"c-body\" id=\"reviewHistory\"></div></div>";
   document.getElementById("content").innerHTML=h;
   renderReviewFilterBar();
   renderReviewUserBar();
+  renderReviewDoneBar();
   renderReviewList();
 }
+// v13.20：已处理记录快捷分类（类型 + 员工，独立于待处理）
+async function renderReviewDoneBar(){
+  var bar=document.getElementById("rvDoneBar");if(!bar)return;
+  try{
+    var data=await apiGet("/api/requests");
+    var done=data.requests.filter(function(r){return r.status!=="pending";});
+    var cntType={};
+    done.forEach(function(r){cntType[r.type]=(cntType[r.type]||0)+1;});
+    var defs=[["","全部"],["take","领用"],["sim_take","领卡"],["return","退还"],["sim_return","退卡"],["ship","寄出"],["repair","报修"],["delete","删除"],["edit","修改"],["sim_transfer","转卡"]];
+    var h="<span style=\"font-size:12px;color:var(--faint);line-height:28px\">已处理分类：</span>";
+    defs.forEach(function(d){
+      var n=d[0]===""?done.length:(cntType[d[0]]||0);
+      if(d[0]!==""&&n===0)return;
+      h+="<span class=\"chip"+(REVIEW_DONE_TYPE===d[0]?" on":"")+"\" data-v=\""+d[0]+"\" onclick=\"filterReviewDoneType(this)\">"+d[1]+" ("+n+")</span>";
+    });
+    // 员工维度
+    var cntUser={};
+    done.forEach(function(r){var u=r.user_id;cntUser[u]=(cntUser[u]||0)+1;});
+    var users={};
+    done.forEach(function(r){users[r.user_id]=r.user_name||"未知";});
+    h+=" <span style=\"font-size:12px;color:var(--faint);line-height:28px;margin-left:10px\">按员工：</span>";
+    h+="<span class=\"chip"+(REVIEW_DONE_USER===""?" on":"")+"\" data-v=\"\" onclick=\"filterReviewDoneUser(this)\">👥 全部 ("+done.length+")</span>";
+    Object.keys(users).forEach(function(uid){
+      h+="<span class=\"chip"+(REVIEW_DONE_USER===uid?" on":"")+"\" data-v=\""+uid+"\" onclick=\"filterReviewDoneUser(this)\">"+esc(users[uid])+" ("+cntUser[uid]+")</span>";
+    });
+    bar.innerHTML=h;
+  }catch(e){bar.innerHTML="";}
+}
+function filterReviewDoneType(el){REVIEW_DONE_TYPE=el.getAttribute("data-v");renderReviewDoneBar();renderReviewList();}
+function filterReviewDoneUser(el){REVIEW_DONE_USER=el.getAttribute("data-v");renderReviewDoneBar();renderReviewList();}
 // v13.18：待审申请按员工快捷分类（带数量）
 async function renderReviewUserBar(){
   var bar=document.getElementById("rvUserBar");if(!bar)return;
@@ -1572,8 +1605,14 @@ async function renderReviewList(){
     }
     return true;
   };
-  var pending=data.requests.filter(function(r){return r.status==="pending"&&flt(r);});
-  var done=data.requests.filter(function(r){return r.status!=="pending"&&flt(r);});
+var pending=data.requests.filter(function(r){return r.status==="pending"&&flt(r);});
+// v13.20：已处理记录独立筛选（类型/员工，与待处理分开）
+var done=data.requests.filter(function(r){
+  if(r.status==="pending")return false;
+  if(REVIEW_DONE_TYPE&&r.type!==REVIEW_DONE_TYPE)return false;
+  if(REVIEW_DONE_USER&&r.user_id!==REVIEW_DONE_USER)return false;
+  return flt(r);
+});
   var h="";
   if(pending.length){
     h+="<div style=\"margin-bottom:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap\"><label style=\"font-size:13px;display:flex;align-items:center;gap:6px;cursor:pointer\"><input type=\"checkbox\" id=\"selAll\" onchange=\"toggleAll()\"> 全选</label><button class=\"btn btn-sm btn-green\" onclick=\"batchHandle('approve')\">✔ 批量同意</button><button class=\"btn btn-sm btn-danger\" onclick=\"batchHandle('reject')\">✘ 批量拒绝</button><span id=\"selCount\" style=\"font-size:12px;color:var(--faint)\"></span></div>";
