@@ -2791,7 +2791,8 @@ async function renderSimWarehouse(){
   if(isMgr){
     h+="<div class=\"mb\" style=\"display:flex;gap:10px;align-items:center;flex-wrap:wrap\"><select id=\"swAssignUser\" style=\"height:38px;border:1.5px solid var(--line);border-radius:9px;padding:0 12px;font-size:13px;background:#fff\"><option value=\"\">选择要分配的员工…</option></select><button class=\"btn btn-green\" id=\"swAssignBtn\" onclick=\"simWhAssign()\">📤 分配给所选员工 (0)</button></div>";
   }
-  h+="<div class=\"mb\"><button class=\"btn btn-primary\" id=\"swTakeBtn\" onclick=\"simWhTake()\">📥 申请领用所选 (0)</button><span id=\"swSelInfo\" style=\"font-size:13px;color:var(--sub)\"></span></div>";
+  // v13.32：仓库电话卡页也提供"登记电话卡"入口（所有人可登记，登记即在用/本人使用）
+  h+="<div class=\"mb\"><button class=\"btn btn-primary\" onclick=\"showAddSim()\">＋ 登记电话卡</button> <button class=\"btn btn-primary\" id=\"swTakeBtn\" onclick=\"simWhTake()\">📥 申请领用所选 (0)</button><span id=\"swSelInfo\" style=\"font-size:13px;color:var(--sub)\"></span></div>";
   // v13.10：行内"领用"按钮（登记时间后，提交申请→主管审核）
   h+="<div class=\"card\"><div class=\"c-head\"><h3>电话卡列表</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th style=\"width:36px\"><input type=\"checkbox\" id=\"swAll\" onchange=\"swToggleAll(this)\"></th><th>卡号</th><th>运营商</th><th>绑定手机</th><th>使用人</th><th>登记时间</th><th>领用</th>"+(isMgr?"<th>操作</th>":"")+"</tr></thead><tbody id=\"swBody\"></tbody></table></div></div>";
   document.getElementById("content").innerHTML=h;
@@ -3191,7 +3192,10 @@ async function saveAddSim(){
   var assetId=document.getElementById("s_asset").value;
   try{
     await apiPost("/api/sims",{data:fd,asset_id:assetId});
-    toast("登记成功");closeModal();renderSimTable();
+    toast("登记成功");closeModal();
+    // v13.32：按当前页面刷新（仓库电话卡页也刷新）
+    if(CURRENT_PAGE==="simwh")renderSimWarehouse();
+    else renderSimTable();
   }catch(e){document.getElementById("s_err").textContent=e.message;}
 }
 // v12.6：电话卡动态表单辅助（simfields 驱动）
