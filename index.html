@@ -3115,7 +3115,9 @@ async function renderSimBoxBar(){
 function filterSimBox(el){
   SIM_BOX_FILTER=el.getAttribute("data-v");
   renderSimBoxBar();
-  renderSimTable();
+  // v13.40：按当前页面刷新（仓库电话卡页点盒子要刷新 swBody，否则筛选不生效）
+  if(CURRENT_PAGE==="simwh")renderSimWhTable();
+  else renderSimTable();
 }
 // v13.34：一键打印盒贴（每盒卡号清单，剪贴到盒子上）
 function printBoxLabel(){
