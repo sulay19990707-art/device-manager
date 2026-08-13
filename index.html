@@ -272,11 +272,14 @@ async function pullCloud(force){
 }
 function ensureSimData(){
   if(!D.simfields||!D.simfields.length)D.simfields=[{id:"sim_type",label:"运营商",type:"select",options:["移动","联通","电信","其他"],required:true}];
-  // v13.34：盒子管理字段（10张一盒，盒号纯数字1/2/3…，格位1-10；登记自动分配）
+  // v13.34：盒子管理字段（10张一盒，盒号纯数字1/2/3…；编号=手机背面编号，手动填）
   if(!D.simfields.some(function(f){return f.id==="box_no";}))
     D.simfields.push({id:"box_no",label:"盒号",type:"input",placeholder:"如 3（自动分配可改）",required:false});
   if(!D.simfields.some(function(f){return f.id==="box_slot";}))
-    D.simfields.push({id:"box_slot",label:"格位",type:"input",placeholder:"如 5（自动分配可改）",required:false});
+    D.simfields.push({id:"box_slot",label:"编号",type:"input",placeholder:"如：手机背面编号",required:false});
+  // v13.36：旧"格位"字段改名为"编号"
+  var oldSlot=D.simfields.find(function(f){return f.id==="box_slot"&&f.label==="格位";});
+  if(oldSlot){oldSlot.label="编号";oldSlot.placeholder="如：手机背面编号";}
   if(!D.simcards)D.simcards=[];
   if(!D.transfers)D.transfers=[];
   if(!D.shipments)D.shipments=[];
@@ -311,7 +314,7 @@ function initDB(){
       {id:"sim_status",label:"状态",type:"select",options:["在库","在用","停用","遗失"],required:false},
       {id:"sim_note",label:"备注",type:"input",placeholder:"其他说明",required:false},
       {id:"box_no",label:"盒号",type:"input",placeholder:"如 3（10张一盒）",required:false},
-      {id:"box_slot",label:"格位",type:"input",placeholder:"如 5（盒内第几格）",required:false}
+      {id:"box_slot",label:"编号",type:"input",placeholder:"如：手机背面编号",required:false}
     ],
     simcards:[]
     ,
@@ -3113,7 +3116,7 @@ function printBoxLabel(){
   if(!w){toast("请允许弹出窗口","err");return;}
   var h="<html><head><meta charset=\"utf-8\"><title>盒贴打印</title><style>body{font-family:sans-serif;padding:20px}table{width:100%;border-collapse:collapse;margin-bottom:30px}th,td{border:1px solid #999;padding:6px 10px;font-size:13px;text-align:left}th{background:#f0f0f0}.boxhead{font-size:20px;font-weight:bold;margin:6px 0 8px}</style></head><body>";
   nos.forEach(function(b){
-    h+="<div class=\"boxhead\">"+b+" 号盒（"+boxes[b].length+" 张）</div><table><tr><th>格位</th><th>卡号</th><th>运营商</th></tr>";
+    h+="<div class=\"boxhead\">"+b+" 号盒（"+boxes[b].length+" 张）</div><table><tr><th>编号</th><th>卡号</th><th>运营商</th></tr>";
     for(var i=1;i<=10;i++){
       var c=boxes[b].find(function(x){return x.slot===String(i);});
       if(c){
@@ -3216,7 +3219,7 @@ async function renderSimTable(){
     if(SIM_CHECKIN_FILTER==="done"&&simNeedCheckin(s))return;
     // v13.34：按盒号筛选
     if(SIM_BOX_FILTER&&(d.box_no||"").trim()!==SIM_BOX_FILTER)return;
-    if(kw&&((d.sim_no||"")+" "+(d.sim_type||"")+" "+(s.asset_sn||"")+" "+(s.asset_name||"")+" "+(d.box_no||"")+"号盒"+(d.box_slot||"")+"格").indexOf(kw)<0)return;
+    if(kw&&((d.sim_no||"")+" "+(d.sim_type||"")+" "+(s.asset_sn||"")+" "+(s.asset_name||"")+" "+(d.box_no||"")+"号盒"+(d.box_slot||"")+"编号").indexOf(kw)<0)return;
     var bindInfo=s.asset_id?(s.asset_sn?("📱 "+esc(s.asset_name)+" 编号:"+esc(s.asset_sn)):("📱 "+esc(s.asset_name))):"<span style=\"color:var(--faint)\">未绑定</span>";
     // v12.6：动态字段列
     var extraTds="";
@@ -3243,7 +3246,7 @@ async function renderSimTable(){
     }else{
       bindHtml=bindInfo;
     }
-    h+="<tr><td><b>"+esc(d.sim_no||"—")+"</b>"+(d.box_no?(d.box_slot?" <span class=\"tag tag-cyan\" style=\"font-size:11px;padding:2px 8px\">"+esc(d.box_no)+"号盒-"+esc(d.box_slot)+"格</span>":""):"")+"</td><td>"+esc(d.sim_type||"—")+"</td>"+extraTds+"<td>"+bindHtml+"</td><td>"+useTd+retTag+simCheckinTag(s)+"</td><td class=\"num\">"+esc(s.created)+"</td><td style=\"white-space:nowrap\">";
+    h+="<tr><td><b>"+esc(d.sim_no||"—")+"</b>"+(d.box_no?(d.box_slot?" <span class=\"tag tag-cyan\" style=\"font-size:11px;padding:2px 8px\">"+esc(d.box_no)+"号盒 · 编号"+esc(d.box_slot)+"</span>":" <span class=\"tag tag-cyan\" style=\"font-size:11px;padding:2px 8px\">"+esc(d.box_no)+"号盒</span>"):"")+"</td><td>"+esc(d.sim_type||"—")+"</td>"+extraTds+"<td>"+bindHtml+"</td><td>"+useTd+retTag+simCheckinTag(s)+"</td><td class=\"num\">"+esc(s.created)+"</td><td style=\"white-space:nowrap\">";
     // v13.6：员工可编辑/删除自己登记的电话卡（跟登记手机一样的原理）
     if(canManage)h+="<button class=\"btn btn-sm btn-ghost\" onclick=\"showEditSim('"+s.id+"')\">编辑</button>";
     // v13.33：签到按钮（在用且需要签到且自己有权限）
@@ -3391,7 +3394,7 @@ async function showAddSim(){
     +"<div class=\"field\"><label>绑定手机</label><select id=\"s_asset\">"+assetOpts+"</select></div>"
     +"<div class=\"m-btns\"><button class=\"btn btn-ghost\" onclick=\"closeModal()\">取消</button><button class=\"btn btn-primary\" onclick=\"saveAddSim()\">确认登记</button></div><div class=\"err\" id=\"s_err\"></div>");
 }
-// v13.34：自动分配盒位（10张一盒）——返回 {box_no, box_slot}
+// v13.34/v13.36：自动分配盒号（10张一盒）——编号(手机背面编号)由手工填写
 function autoBoxSlot(){
   var slots={};
   (D.simcards||[]).forEach(function(s){
@@ -3406,24 +3409,22 @@ function autoBoxSlot(){
     var found=nos.find(function(n){return slots[n]<10;});
     box=found!==undefined?found:(Math.max.apply(null,nos)+1);
   }
-  var cnt=slots[box]||0;
-  return {box_no:String(box),box_slot:String(cnt+1)};
+  return {box_no:String(box),box_slot:""};
 }
 async function saveAddSim(){
   var no=document.getElementById("s_no").value.trim();
   if(!no){document.getElementById("s_err").textContent="请填写卡号";return;}
   var fd=collectSimForm(window.__simFields||[]);
   fd.sim_no=no;
-  // v13.34：盒位自动分配（未填时按顺序填下一个空位）
-  if(!fd.box_no||!fd.box_slot){
+  // v13.34/v13.36：自动分配盒号（编号=手机背面编号，手填）
+  if(!fd.box_no){
     var pos=autoBoxSlot();
-    if(!fd.box_no)fd.box_no=pos.box_no;
-    if(!fd.box_slot)fd.box_slot=pos.box_slot;
+    fd.box_no=pos.box_no;
   }
   var assetId=document.getElementById("s_asset").value;
   try{
     await apiPost("/api/sims",{data:fd,asset_id:assetId});
-    toast("登记成功 位置 "+fd.box_no+"号盒-"+fd.box_slot+"格");closeModal();
+    toast("登记成功 "+fd.box_no+"号盒"+(fd.box_slot?(" · 编号"+fd.box_slot):""));closeModal();
     // v13.32：按当前页面刷新（仓库电话卡页也刷新）
     if(CURRENT_PAGE==="simwh")renderSimWarehouse();
     else renderSimTable();
