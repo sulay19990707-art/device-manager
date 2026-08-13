@@ -276,7 +276,7 @@ function ensureSimData(){
   if(!D.transfers)D.transfers=[];
   if(!D.shipments)D.shipments=[];
   // v13.8：权限开关配置兜底（主管/组长控制：员工才能编辑手机号/绑定手机）
-  if(!D.settings)D.settings={allow_edit_phone:false,allow_edit_sim_bind:false};
+  if(!D.settings)D.settings={allow_edit_phone:false,allow_edit_sim_bind:false,checkin_enabled:false,checkin_freq_days:3,checkin_msg:"请确认您的电话卡还在手上，丢失请立即上报！"};
   // v13.12：退回原因选项（主管/组长自定义，退回申请时选择，审核后同步到设备/卡数据）
   if(!D.return_opts||!D.return_opts.length)D.return_opts=["账号封禁","老号","没号","注销","其他"];
   // v13.22：设备操作日志（生命周期时间线）
@@ -307,6 +307,10 @@ function initDB(){
       {id:"sim_note",label:"备注",type:"input",placeholder:"其他说明",required:false}
     ],
     simcards:[]
+    ,
+    checkins:[],
+    // v13.33：电话卡签到设置（主管/组长可改）
+    settings:{allow_edit_phone:false,allow_edit_sim_bind:false,checkin_enabled:false,checkin_freq_days:3,checkin_msg:"请确认您的电话卡还在手上，丢失请立即上报！"}
   };
 }
 var D=loadLocal()||initDB();
@@ -458,7 +462,7 @@ function delReturnOpt(tk,v){
 }
 function getSettings(tk){
   var u=verify(tk);if(!u)return[401,{error:"未登录"}];
-  return[200,{settings:D.settings||{allow_edit_phone:false,allow_edit_sim_bind:false}}];
+  return[200,{settings:D.settings||{allow_edit_phone:false,allow_edit_sim_bind:false,checkin_enabled:false,checkin_freq_days:3,checkin_msg:"请确认您的电话卡还在手上，丢失请立即上报！"}}];
 }
 function saveSettings(tk,b){
   var u=verify(tk);if(!u)return[401,{error:"未登录"}];
@@ -466,6 +470,10 @@ function saveSettings(tk,b){
   if(!D.settings)D.settings={allow_edit_phone:false,allow_edit_sim_bind:false};
   if(typeof b.allow_edit_phone==="boolean")D.settings.allow_edit_phone=b.allow_edit_phone;
   if(typeof b.allow_edit_sim_bind==="boolean")D.settings.allow_edit_sim_bind=b.allow_edit_sim_bind;
+  // v13.33：签到设置
+  if(typeof b.checkin_enabled==="boolean")D.settings.checkin_enabled=b.checkin_enabled;
+  if(typeof b.checkin_freq_days==="number")D.settings.checkin_freq_days=b.checkin_freq_days;
+  if(typeof b.checkin_msg==="string")D.settings.checkin_msg=b.checkin_msg;
   sv();return[200,{ok:true,settings:D.settings}];
 }
 function getSims(tk){
@@ -1229,6 +1237,20 @@ function simBatchTake(tk,b){
   if(!ok)return[400,{error:"所选卡都不可领用"}];
   sv();return[200,{ok:true,submitted:ok,failed:fail}];
 }
+// v13.33：电话卡签到——员工给自己在用的卡签到（防丢确认）
+function postCheckin(tk,b){
+  var u=verify(tk);if(!u)return[401,{error:"未登录"}];
+  var s=(D.simcards||[]).find(function(x){return x.id===b.sim_id;});
+  if(!s)return[404,{error:"电话卡不存在"}];
+  var d=s.data||{};
+  // 只能给"在用"且属于自己（自己领用/自己登记）的卡签到
+  if(d.sim_status!=="在用")return[400,{error:"只有"+"在用"+"的电话卡需要签到"}];
+  if(s.user_id!==u.id&&s.created_by!==u.id)return[403,{error:"只能给本人使用的电话卡签到"}];
+  s.last_checkin=nowStr();
+  if(!D.checkins)D.checkins=[];
+  D.checkins.push({id:uid(),sim_id:s.id,sim_no:d.sim_no||"",user_id:u.id,user_name:u.name,time:nowStr()});
+  sv();return[200,{ok:true,last_checkin:s.last_checkin}];
+}
 function simReturnDirect(tk,b){
   var u=verify(tk);if(!u)return[401,{error:"未登录"}];
   if(u.role!=="supervisor"&&u.role!=="leader")return[403,{error:"无权限"}];
@@ -1363,6 +1385,7 @@ function route(method,path,tk,body){
   if(pp[1]==="api"&&pp[2]==="return_opts"&&method==="DELETE")return delReturnOpt(tk,decodeURIComponent(pp[3]||""));
   if(path==="/api/sims/update"&&method==="POST")return updateSim(tk,body);
 if(path==="/api/sims/batch_take"&&method==="POST")return simBatchTake(tk,body);
+if(path==="/api/sims/checkin"&&method==="POST")return postCheckin(tk,body);
 if(path==="/api/sims/return_direct"&&method==="POST")return simReturnDirect(tk,body);
 if(path==="/api/sims/assign"&&method==="POST")return simAssign(tk,body);
 if(path==="/api/settings"&&method==="GET")return getSettings(tk);
@@ -1420,7 +1443,7 @@ window.fetch=function(url,opts){
 
 // ============ 前端 ============
 var ROLE_LABELS={supervisor:"主管",leader:"组长",member:"员工"};
-var STATE={user:null},CURRENT_PAGE="",ASSET_FILTER="",MYDEV_TYPE="",WH_MODEL="",WH_STATUS="available",WH_REASON="",WH_PLATFORM="",ASSET_PLATFORM="",REVIEW_FILTER="",REVIEW_KW="",REVIEW_USER="",REVIEW_DONE_TYPE="",REVIEW_DONE_USER="",SHIP_FILTER_REASON="",SHIP_FILTER_USER="",SHIP_FILTER_MODEL="",SIM_FILTER_USER="",SIM_STATUS_FILTER="",SIM_WH_STATUS="",SIM_WH_TYPE="";
+var STATE={user:null},CURRENT_PAGE="",ASSET_FILTER="",MYDEV_TYPE="",WH_MODEL="",WH_STATUS="available",WH_REASON="",WH_PLATFORM="",ASSET_PLATFORM="",REVIEW_FILTER="",REVIEW_KW="",REVIEW_USER="",REVIEW_DONE_TYPE="",REVIEW_DONE_USER="",SHIP_FILTER_REASON="",SHIP_FILTER_USER="",SHIP_FILTER_MODEL="",SIM_FILTER_USER="",SIM_STATUS_FILTER="",SIM_CHECKIN_FILTER="",SIM_WH_STATUS="",SIM_WH_TYPE="";
 var REQ_TYPES={take:["领用","tag-blue"],repair:["报修","tag-orange"],return:["退还","tag-purple"],delete:["删除","tag-red"],edit:["修改","tag-purple"],ship:["寄出","tag-purple"],sim_take:["领卡","tag-blue"],sim_return:["退卡","tag-purple"],sim_transfer:["转卡","tag-purple"]};
 var REQ_STATUS={pending:["待审核","tag-orange"],approved:["已同意","tag-green"],rejected:["已拒绝","tag-red"],cancelled:["已撤销","tag-gray"]};
 
@@ -1559,6 +1582,16 @@ async function refreshBadges(){
         var waitMe=(tf.transfers||[]).filter(function(t){return t.status==="pending"&&t.to_id===STATE.user.id;}).length;
         set("mymain",myP+waitMe);
       }catch(e){set("mymain",myP);}
+      // v13.33：我的电话卡角标 = 待签到数量
+      try{
+        var st=await apiGet("/api/settings");
+        if(st.settings&&st.settings.checkin_enabled){
+          var sd=await apiGet("/api/sims");
+          var need=0;
+          (sd.sims||[]).forEach(function(x){if((x.data||{}).sim_status==="在用"&&simNeedCheckin(x))need++;});
+          set("sims",need);
+        }else set("sims",0);
+      }catch(e){set("sims",0);}
     }
   }catch(e){}
 }
@@ -2490,12 +2523,15 @@ async function renderOptions(){
   h+="<div class=\"mb\"><button class=\"btn btn-primary\" onclick=\"showAddField()\">＋ 添加设备字段</button> <button class=\"btn btn-primary\" onclick=\"showAddSimField()\">＋ 添加电话卡字段</button></div>";
   // v13.8：权限开关（主管/组长控制：员工才能编辑手机号 / 绑定手机）
   h+="<div class=\"card\"><div class=\"c-head\"><h3>权限开关</h3></div><div class=\"c-body\" id=\"permBody\">加载中…</div></div>";
+  // v13.33：电话卡签到设置（主管/组长）——定期签到防丢
+  h+="<div class=\"card\"><div class=\"c-head\"><h3>电话卡签到设置</h3></div><div class=\"c-body\" id=\"checkinBody\">加载中…</div></div>";
   h+="<div class=\"card\"><div class=\"c-head\"><h3>手机台账 · 登记字段</h3></div><div class=\"c-body\" id=\"fieldBody\"></div></div>";
   h+="<div class=\"card\"><div class=\"c-head\"><h3>电话卡台账 · 登记字段</h3></div><div class=\"c-body\" id=\"simOptBody\"></div></div>";
   // v13.12：退回原因选项（退回申请时选择，直接显示非下拉）
   h+="<div class=\"card\"><div class=\"c-head\"><h3>退回原因选项</h3></div><div class=\"c-body\" id=\"returnOptBody\">加载中…</div></div>";
   document.getElementById("content").innerHTML=h;
   renderPermBody();
+  renderCheckinSetting();
   renderFieldList();
   renderSimFieldList();
   renderReturnOptList();
@@ -2541,6 +2577,41 @@ async function savePerm(){
     var r=await apiPost("/api/settings",body);
     toast("权限开关已保存");
   }catch(e){toast(e.message,"err");renderPermBody();}
+}
+// v13.33：电话卡签到设置（主管/组长）——开关/周期天数/提示文案
+async function renderCheckinSetting(){
+  var body=document.getElementById("checkinBody");if(!body)return;
+  try{
+    var data=await apiGet("/api/settings");
+    var s=data.settings||{};
+    // 今日签到统计
+    var simsData=await apiGet("/api/sims");
+    var st=s.checkin_enabled?simsData.sims||[]:[];
+    var need=0,done=0;
+    st.forEach(function(x){
+      if((x.data||{}).sim_status!=="在用")return;
+      if(simNeedCheckin(x))need++;else done++;
+    });
+    body.innerHTML="<div style=\"display:flex;flex-direction:column;gap:14px\">"
+      +"<label style=\"display:flex;justify-content:space-between;align-items:center;gap:16px;cursor:pointer;font-size:14px\"><span><b>开启电话卡签到</b><div style=\"font-size:12px;color:var(--faint)\">开启后，在用的电话卡需定期签到确认（防丢）；关闭则全员无需签到</div></span><input type=\"checkbox\" id=\"ckEnable\" style=\"width:18px;height:18px;flex-shrink:0\" "+(s.checkin_enabled?"checked":"")+" onchange=\"saveCheckin()\"></label>"
+      +"<div class=\"field\"><label>签到周期（天）</label><input id=\"ckFreq\" type=\"number\" min=\"1\" max=\"90\" value=\""+(s.checkin_freq_days||3)+"\" style=\"max-width:120px\" onchange=\"saveCheckin()\"></div>"
+      +"<div class=\"field\"><label>签到提示文案</label><input id=\"ckMsg\" value=\""+esc(s.checkin_msg||"")+"\" placeholder=\"员工签到页显示的提示\"></div>"
+      +"<div style=\"font-size:12px;color:var(--sub)\">今日统计：应签到 <b>"+need+"</b> 张 ｜ 已签到 <b>"+done+"</b> 张 ｜ 未签到 <b class=\"num\" style=\"color:var(--red)\">"+(need)+"</b> 张</div>"
+      +"<div class=\"m-btns\"><button class=\"btn btn-primary\" onclick=\"saveCheckin(true)\">保存签到设置</button></div>"
+      +"</div>";
+  }catch(e){body.innerHTML="<span style=\"color:var(--faint)\">加载失败</span>";}
+}
+async function saveCheckin(withMsg){
+  try{
+    var body={
+      checkin_enabled:document.getElementById("ckEnable").checked,
+      checkin_freq_days:parseInt(document.getElementById("ckFreq").value,10)||3,
+      checkin_msg:document.getElementById("ckMsg").value.trim()
+    };
+    await apiPost("/api/settings",body);
+    toast(withMsg?"签到设置已保存":"签到开关已保存");
+    renderCheckinSetting();refreshBadges();
+  }catch(e){toast(e.message,"err");}
 }
 // v12.6：电话卡字段管理（仿设备字段）
 async function renderSimFieldList(){
@@ -2928,6 +2999,8 @@ async function renderSims(){
   if(!isMinePage){
     h+="<div class=\"filter-bar\" style=\"flex-wrap:wrap\" id=\"simStatusBar\">加载状态…</div>";
     h+="<div class=\"filter-bar\" style=\"flex-wrap:wrap\" id=\"simPersonBar\">加载人员…</div>";
+    // v13.33：签到统计条（应签/已签/未签，点击筛未签到）
+    h+="<div class=\"filter-bar\" style=\"flex-wrap:wrap\" id=\"simCheckinBar\">加载签到统计…</div>";
   }
   // v12.6：动态字段列（simfields 自动成为列）
   var extraThs="";
@@ -2942,7 +3015,7 @@ async function renderSims(){
     h+="<div class=\"card\"><div class=\"c-head\"><h3>运营商分布</h3></div><div class=\"c-body\" id=\"simStatBody\"></div></div>";
   }
   document.getElementById("content").innerHTML=h;
-  if(!isMinePage){renderSimStatusBar();renderSimPersonBar();renderSimReqList();renderSimStatBody();}
+  if(!isMinePage){renderSimStatusBar();renderSimPersonBar();renderSimCheckinBar();renderSimReqList();renderSimStatBody();}
   renderSimTable();
 }
 // v13.9：电话卡状态快捷分类（主管/组长，带数量）
@@ -2963,6 +3036,28 @@ async function renderSimStatusBar(){
 function filterSimStatus(el){
   SIM_STATUS_FILTER=el.getAttribute("data-v");
   renderSimStatusBar();
+  renderSimTable();
+}
+// v13.33：签到统计条（应签/已签/未签，点击筛未签到）
+async function renderSimCheckinBar(){
+  var bar=document.getElementById("simCheckinBar");if(!bar)return;
+  try{
+    var st=D.settings||{};
+    var data=await apiGet("/api/sims");
+    var sims=data.sims||[];
+    var need=0,done=0;
+    sims.forEach(function(x){if((x.data||{}).sim_status!=="在用")return;if(simNeedCheckin(x))need++;else done++;});
+    var h="<span style=\"font-size:12px;color:var(--faint);line-height:28px\">签到：</span>";
+    h+="<span class=\"chip"+(SIM_CHECKIN_FILTER===""?" on":"")+"\" data-v=\"\" onclick=\"filterSimCheckin(this)\">全部 ("+sims.length+")</span>";
+    h+="<span class=\"chip"+(SIM_CHECKIN_FILTER==="need"?" on":"")+"\" data-v=\"need\" onclick=\"filterSimCheckin(this)\">⚠ 未签到 ("+need+")</span>";
+    h+="<span class=\"chip"+(SIM_CHECKIN_FILTER==="done"?" on":"")+"\" data-v=\"done\" onclick=\"filterSimCheckin(this)\">✓ 已签到 ("+done+")</span>";
+    if(!st.checkin_enabled)h+="<span class=\"tag tag-gray\" style=\"margin-left:6px\">签到未开启</span>";
+    bar.innerHTML=h;
+  }catch(e){bar.innerHTML="";}
+}
+function filterSimCheckin(el){
+  SIM_CHECKIN_FILTER=el.getAttribute("data-v");
+  renderSimCheckinBar();
   renderSimTable();
 }
 // v13.9：领用/退卡记录（sim 申请历史）
@@ -3047,6 +3142,9 @@ async function renderSimTable(){
     // v13.13：按使用人（user_id）过滤，与按人查看计数一致
     if(SIM_FILTER_USER&&s.user_id!==SIM_FILTER_USER)return;
     if(SIM_STATUS_FILTER&&d.sim_status!==SIM_STATUS_FILTER)return;
+    // v13.33：签到筛选（need=未签到 done=已签到）
+    if(SIM_CHECKIN_FILTER==="need"&&!simNeedCheckin(s))return;
+    if(SIM_CHECKIN_FILTER==="done"&&simNeedCheckin(s))return;
     if(kw&&((d.sim_no||"")+" "+(d.sim_type||"")+" "+(s.asset_sn||"")+" "+(s.asset_name||"")).indexOf(kw)<0)return;
     var bindInfo=s.asset_id?(s.asset_sn?("📱 "+esc(s.asset_name)+" 编号:"+esc(s.asset_sn)):("📱 "+esc(s.asset_name))):"<span style=\"color:var(--faint)\">未绑定</span>";
     // v12.6：动态字段列
@@ -3074,9 +3172,11 @@ async function renderSimTable(){
     }else{
       bindHtml=bindInfo;
     }
-    h+="<tr><td><b>"+esc(d.sim_no||"—")+"</b></td><td>"+esc(d.sim_type||"—")+"</td>"+extraTds+"<td>"+bindHtml+"</td><td>"+useTd+retTag+"</td><td class=\"num\">"+esc(s.created)+"</td><td style=\"white-space:nowrap\">";
+    h+="<tr><td><b>"+esc(d.sim_no||"—")+"</b></td><td>"+esc(d.sim_type||"—")+"</td>"+extraTds+"<td>"+bindHtml+"</td><td>"+useTd+retTag+simCheckinTag(s)+"</td><td class=\"num\">"+esc(s.created)+"</td><td style=\"white-space:nowrap\">";
     // v13.6：员工可编辑/删除自己登记的电话卡（跟登记手机一样的原理）
     if(canManage)h+="<button class=\"btn btn-sm btn-ghost\" onclick=\"showEditSim('"+s.id+"')\">编辑</button>";
+    // v13.33：签到按钮（在用且需要签到且自己有权限）
+    if(simNeedCheckin(s)&&canManage)h+=" <button class=\"btn btn-sm btn-green\" onclick=\"simCheckin('"+s.id+"')\">签到</button>";
     if(canDelete)h+=" <button class=\"btn btn-sm btn-danger\" onclick=\"delSimF('"+s.id+"')\">删除</button>";
     // v13.7：在用卡退回仓库（员工退自己用的走申请，主管/组长直接退）
     if(d.sim_status==="在用"&&!myReq&&(role!=="member"||isUseMine)){
@@ -3090,6 +3190,42 @@ async function renderSimTable(){
   var extraCnt=(data.simfields||[]).filter(function(f){return !(f.id==="sim_type"&&f.label==="运营商");}).length;
   if(!h)h="<tr><td colspan=\""+(6+extraCnt)+"\" class=\"empty\">暂无电话卡，点击右上角登记</td></tr>";
   document.getElementById("simBody").innerHTML=h;
+}
+// v13.33：电话卡签到 helper——判断卡是否需要签到（在用卡 + 超过间隔天数）
+function simNeedCheckin(s){
+  try{
+    var st=D.settings||{};
+    if(!st.checkin_enabled)return false;
+    var d=s.data||{};
+    if(d.sim_status!=="在用")return false;
+    if(!s.last_checkin)return true;
+    var freq=(parseInt(st.checkin_freq_days,10)||3)*86400000;
+    var last=new Date(String(s.last_checkin).replace(/-/g,"/")).getTime();
+    if(isNaN(last))return true;
+    return (Date.now()-last)>=freq;
+  }catch(e){return false;}
+}
+function simCheckinTag(s){
+  if(!s)return "";
+  var st=D.settings||{};
+  if(!st.checkin_enabled)return "";
+  var d=s.data||{};
+  if(d.sim_status!=="在用")return "";
+  if(simNeedCheckin(s)){
+    return "<span class=\"tag tag-red\" style=\"font-size:11px;padding:2px 8px;margin-left:4px\">⚠ 待签到</span>";
+  }
+  var last=String(s.last_checkin||"").slice(5,16);
+  return "<span class=\"tag tag-green\" style=\"font-size:11px;padding:2px 8px;margin-left:4px\">✓ 已签 "+(last||"—")+"</span>";
+}
+// 签到动作
+async function simCheckin(simId){
+  try{
+    await apiPost("/api/sims/checkin",{sim_id:simId});
+    toast("✅ 签到成功，卡确认在手");
+    if(CURRENT_PAGE==="sims")renderSimTable();
+    else if(CURRENT_PAGE==="simwh")renderSimWarehouse();
+    refreshBadges();
+  }catch(e){toast(e.message,"err");}
 }
 // v13.12：电话卡动态字段单击编辑（员工可编辑自己登记/领用的卡备注）
 async function simInlineEdit(simId, fieldId, type, td){
