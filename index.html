@@ -503,7 +503,7 @@ function getSims(tk){
   }
   list=list.map(function(s){
     var a=s.asset_id?D.assets.find(function(x){return x.id===s.asset_id;}):null;
-    return Object.assign({},s,{asset_sn:(a&&a.data&&a.data.sn)||"",asset_model:(a&&a.data&&a.data.model)||"",asset_name:a?assetName(a):""});
+    return Object.assign({},s,{asset_sn:(a&&a.data&&a.data.sn)||"",asset_model:(a&&a.data&&a.data.model)||"",asset_phone:(a&&a.data&&a.data.phone)||"",asset_name:a?assetName(a):""});
   });
   return[200,{sims:list,simfields:D.simfields||[]}];
 }
@@ -2962,7 +2962,7 @@ async function renderSimWhTable(){
     if(SIM_BOX_FILTER&&(d.box_no||"").trim()!==SIM_BOX_FILTER)return;
     if(kw&&((d.sim_no||"")+" "+(d.sim_type||"")).indexOf(kw)<0)return;
     // v13.8：仓库电话卡显示绑定手机
-    var bindInfo=s.asset_id?(s.asset_sn?("📱 "+esc(s.asset_name)+" 编号:"+esc(s.asset_sn)):("📱 "+esc(s.asset_name))):"<span style=\"color:var(--faint)\">未绑定</span>";
+    var bindInfo=s.asset_id?("📱 "+esc(s.asset_name)+(s.asset_phone?(" · "+esc(s.asset_phone)):(s.asset_sn?(" · 编号"+esc(s.asset_sn)):""))):"<span style=\"color:var(--faint)\">未绑定</span>";
     // v13.10：行内"领用"按钮（在库卡，提交申请→主管审核）
     var swTake=(d.sim_status==="在库"&&!s.user_id);
     h+="<tr><td><input type=\"checkbox\" class=\"sw-chk\" value=\""+s.id+"\" onchange=\"swUpdateSel()\"></td><td><b>"+esc(d.sim_no||"—")+"</b></td><td>"+esc(d.sim_type||"—")+"</td><td>"+bindInfo+returnTag(d)+"</td><td>"+(s.user_id?(esc(s.user_name||"—")+" <span class=\"tag tag-blue\" style=\"font-size:11px;padding:2px 8px\">在用</span>"):esc(s.created_by_name||"—"))+"</td><td class=\"num\">"+esc(s.created)+"</td><td>"+(swTake?"<button class=\"btn btn-sm btn-green\" onclick=\"swTakeOne('"+s.id+"')\">领用</button>":"<span style=\"color:var(--faint);font-size:12px\">—</span>")+"</td>"+(isMgr||allowAll?"<td style=\"white-space:nowrap\"><button class=\"btn btn-sm btn-ghost\" onclick=\"showEditSim('"+s.id+"')\">编辑</button> "+(isMgr?"<button class=\"btn btn-sm btn-danger\" onclick=\"delSimF('"+s.id+"')\">删除</button>":"")+"</td>":"")+"</tr>";
@@ -3235,7 +3235,7 @@ async function renderSimTable(){
     // v13.34：按盒号筛选
     if(SIM_BOX_FILTER&&(d.box_no||"").trim()!==SIM_BOX_FILTER)return;
     if(kw&&((d.sim_no||"")+" "+(d.sim_type||"")+" "+(s.asset_sn||"")+" "+(s.asset_name||"")+" "+(d.box_no||"")+"号盒"+(d.box_slot||"")+"编号").indexOf(kw)<0)return;
-    var bindInfo=s.asset_id?(s.asset_sn?("📱 "+esc(s.asset_name)+" 编号:"+esc(s.asset_sn)):("📱 "+esc(s.asset_name))):"<span style=\"color:var(--faint)\">未绑定</span>";
+    var bindInfo=s.asset_id?("📱 "+esc(s.asset_name)+(s.asset_phone?(" · "+esc(s.asset_phone)):(s.asset_sn?(" · 编号"+esc(s.asset_sn)):""))):"<span style=\"color:var(--faint)\">未绑定</span>";
     // v12.6：动态字段列
     var extraTds="";
     (data.simfields||[]).forEach(function(f){
