@@ -284,7 +284,7 @@ function ensureSimData(){
   if(!D.transfers)D.transfers=[];
   if(!D.shipments)D.shipments=[];
   // v13.8：权限开关配置兜底（主管/组长控制：员工才能编辑手机号/绑定手机）
-  if(!D.settings)D.settings={allow_edit_phone:false,allow_edit_sim_bind:false,checkin_enabled:false,checkin_freq_days:3,checkin_msg:"请确认您的电话卡还在手上，丢失请立即上报！"};
+  if(!D.settings)D.settings={allow_edit_phone:false,allow_edit_sim_bind:false,checkin_enabled:false,checkin_freq_days:3,checkin_msg:"请确认您的电话卡还在手上，丢失请立即上报！",allow_edit_sim_box:false};
   // v13.12：退回原因选项（主管/组长自定义，退回申请时选择，审核后同步到设备/卡数据）
   if(!D.return_opts||!D.return_opts.length)D.return_opts=["账号封禁","老号","没号","注销","其他"];
   // v13.22：设备操作日志（生命周期时间线）
@@ -320,7 +320,7 @@ function initDB(){
     ,
     checkins:[],
     // v13.33：电话卡签到设置（主管/组长可改）
-    settings:{allow_edit_phone:false,allow_edit_sim_bind:false,checkin_enabled:false,checkin_freq_days:3,checkin_msg:"请确认您的电话卡还在手上，丢失请立即上报！"}
+    settings:{allow_edit_phone:false,allow_edit_sim_bind:false,checkin_enabled:false,checkin_freq_days:3,checkin_msg:"请确认您的电话卡还在手上，丢失请立即上报！",allow_edit_sim_box:false}
   };
 }
 var D=loadLocal()||initDB();
@@ -472,7 +472,7 @@ function delReturnOpt(tk,v){
 }
 function getSettings(tk){
   var u=verify(tk);if(!u)return[401,{error:"未登录"}];
-  return[200,{settings:D.settings||{allow_edit_phone:false,allow_edit_sim_bind:false,checkin_enabled:false,checkin_freq_days:3,checkin_msg:"请确认您的电话卡还在手上，丢失请立即上报！"}}];
+  return[200,{settings:D.settings||{allow_edit_phone:false,allow_edit_sim_bind:false,checkin_enabled:false,checkin_freq_days:3,checkin_msg:"请确认您的电话卡还在手上，丢失请立即上报！",allow_edit_sim_box:false}}];
 }
 function saveSettings(tk,b){
   var u=verify(tk);if(!u)return[401,{error:"未登录"}];
@@ -484,6 +484,7 @@ function saveSettings(tk,b){
   if(typeof b.checkin_enabled==="boolean")D.settings.checkin_enabled=b.checkin_enabled;
   if(typeof b.checkin_freq_days==="number")D.settings.checkin_freq_days=b.checkin_freq_days;
   if(typeof b.checkin_msg==="string")D.settings.checkin_msg=b.checkin_msg;
+  if(typeof b.allow_edit_sim_box==="boolean")D.settings.allow_edit_sim_box=b.allow_edit_sim_box;
   sv();return[200,{ok:true,settings:D.settings}];
 }
 function getSims(tk){
@@ -526,6 +527,9 @@ function updateSim(tk,b){
   // v13.9：卡号唯一校验（编辑卡号时）
   if(b.data&&b.data.sim_no&&(D.simcards||[]).find(function(x){return x.id!==s.id&&x.data&&x.data.sim_no===b.data.sim_no;}))
     return[400,{error:"卡号已存在，不能重复"}];
+  // v13.37：盒号/编号修改权限——员工需主管开启开关（allow_edit_sim_box）
+  if(u.role==="member"&&b.data&&(b.data.box_no!==undefined||b.data.box_slot!==undefined)&&(!D.settings||!D.settings.allow_edit_sim_box))
+    return[400,{error:"盒号/编号修改已锁定，需主管在选项管理开启权限"}];
   if(b.data){for(var k in b.data)s.data[k]=b.data[k];}
   // v13.16：绑定手机——主管/组长可绑所有卡；员工绑自己登记/领用的卡（v13.8 开关对员工仍生效，主管/组长不受限）
   if(b.asset_id!==undefined&&u.role!=="supervisor"&&u.role!=="leader"&&(!D.settings||!D.settings.allow_edit_sim_bind))return[400,{error:"绑定手机修改已锁定，需主管在选项管理开启权限"}];
@@ -2578,12 +2582,14 @@ async function renderPermBody(){
     body.innerHTML="<div style=\"display:flex;flex-direction:column;gap:14px\">"
       +"<label style=\"display:flex;justify-content:space-between;align-items:center;gap:16px;cursor:pointer;font-size:14px\"><span><b>允许编辑手机号</b><div style=\"font-size:12px;color:var(--faint)\">开启后，设备列表的手机号可单击编辑（主管/组长/员工均可）</div></span><input type=\"checkbox\" id=\"swPhone\" style=\"width:18px;height:18px;flex-shrink:0\" "+(s.allow_edit_phone?"checked":"")+" onchange=\"savePerm()\"></label>"
       +"<label style=\"display:flex;justify-content:space-between;align-items:center;gap:16px;cursor:pointer;font-size:14px\"><span><b>允许修改绑定手机</b><div style=\"font-size:12px;color:var(--faint)\">开启后，电话卡的绑定手机可修改（含员工自己登记的卡）</div></span><input type=\"checkbox\" id=\"swSimBind\" style=\"width:18px;height:18px;flex-shrink:0\" "+(s.allow_edit_sim_bind?"checked":"")+" onchange=\"savePerm()\"></label>"
+      // v13.37：员工编辑盒号/编号权限开关
+      +"<label style=\"display:flex;justify-content:space-between;align-items:center;gap:16px;cursor:pointer;font-size:14px\"><span><b>允许员工编辑盒号/编号</b><div style=\"font-size:12px;color:var(--faint)\">开启后，员工可修改自己电话卡的盒号/编号（手机背面编号）；关闭则锁定</div></span><input type=\"checkbox\" id=\"swSimBox\" style=\"width:18px;height:18px;flex-shrink:0\" "+(s.allow_edit_sim_box?"checked":"")+" onchange=\"savePerm()\"></label>"
       +"</div>";
   }catch(e){body.innerHTML="<span style=\"color:var(--faint)\">加载失败</span>";}
 }
 async function savePerm(){
   try{
-    var body={allow_edit_phone:document.getElementById("swPhone").checked,allow_edit_sim_bind:document.getElementById("swSimBind").checked};
+    var body={allow_edit_phone:document.getElementById("swPhone").checked,allow_edit_sim_bind:document.getElementById("swSimBind").checked,allow_edit_sim_box:document.getElementById("swSimBox").checked};
     var r=await apiPost("/api/settings",body);
     toast("权限开关已保存");
   }catch(e){toast(e.message,"err");renderPermBody();}
