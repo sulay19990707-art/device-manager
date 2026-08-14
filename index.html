@@ -1172,7 +1172,12 @@ function postShipReturn(tk,id){
     if(!inScope(u,s.user_id)&&!inScope(u,a?s.created_by:""))return[403,{error:"只能处理自己组的手机"}];
   }
   s.status="returned";s.return_time=nowStr();s.return_by=u.name; s.seen=false;
-  if(a&&a.status==="shipped")a.status="in_use";
+  // v13.42：寄回手机恢复"在库"（原来恢复 in_use 导致新员工领不了），并结束原在用记录释放占用
+  if(a&&a.status==="shipped"){
+    a.status="available";
+    var openU=(D.uses||[]).find(function(x){return x.asset_id===a.id&&!x.return_time;});
+    if(openU){openU.return_time=nowStr();openU.return_reason="外寄寄回";}
+  }
   // v13.22：操作日志
   addLog(s.asset_id,"寄回","确认寄回（"+s.to_where+"）",u.name);
   sv();return[200,{ok:true}];
