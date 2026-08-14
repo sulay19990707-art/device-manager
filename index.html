@@ -3542,6 +3542,8 @@ async function showEditSim(id){
   var assets=await apiGet("/api/assets");
   var permData=await apiGet("/api/settings");
   var allowBind=permData.settings&&permData.settings.allow_edit_sim_bind;
+  var allowAllS=permData.settings&&permData.settings.allow_edit_all_sim;
+  var isMgrS=(STATE.user.role==="supervisor"||STATE.user.role==="leader");
   var s=(data.sims||[]).find(function(x){return x.id===id;});
   if(!s){toast("卡不存在","err");return;}
   var d=s.data||{};
@@ -3550,7 +3552,8 @@ async function showEditSim(id){
   var assetOpts="<option value=\"\">不绑定</option>";
   assets.assets.forEach(function(a){assetOpts+="<option value=\""+a.id+"\""+(s.asset_id===a.id?" selected":"")+">"+esc(assetName(a))+"</option>";});
   // v13.8：绑定手机修改受权限开关控制（开关关→禁用下拉）
-  var bindLock=!allowBind;
+  // v13.43：绑定下拉禁用判断加总开关+主管组长不受限（否则员工开总开关也清空不了绑定手机）
+  var bindLock=!allowBind&&!allowAllS&&!isMgrS;
   showModal("<h3>编辑电话卡</h3>"
     +"<div class=\"field\"><label>卡号<span class=\"req\"> *</span></label><input id=\"s_no\" value=\""+esc(d.sim_no||"")+"\"></div>"
     +simFieldHtml(simfields,d)
