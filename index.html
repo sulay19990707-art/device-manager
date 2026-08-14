@@ -189,6 +189,57 @@ function uatob(s){var bin=atob(s),b=[],i=0,j=0,r="";for(j=0;j<bin.length;j++)b.p
 function nowStr(){var d=new Date(),p=function(n){return String(n).padStart(2,"0");};return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate())+" "+p(d.getHours())+":"+p(d.getMinutes());}
 function uid(){return "id"+Date.now().toString(36)+Math.random().toString(36).slice(2,7);}
 function esc(s){return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}
+// v13.41：导出 Excel（CSV with BOM，Excel 双击打开中文不乱码）
+function exportCSV(filename, headers, rows){
+  var lines=[headers.join(",")];
+  (rows||[]).forEach(function(r){
+    lines.push(r.map(function(v){
+      var s=String(v==null?"":v);
+      if(/[",\n]/.test(s))s="\""+s.replace(/"/g,"\"\"")+"\"";
+      return s;
+    }).join(","));
+  });
+  var blob=new Blob(["\ufeff"+lines.join("\r\n")],{type:"text/csv;charset=utf-8"});
+  var a=document.createElement("a");
+  a.href=URL.createObjectURL(blob);
+  a.download=filename;
+  document.body.appendChild(a);a.click();
+  setTimeout(function(){URL.revokeObjectURL(a.href);a.remove();},500);
+}
+// v13.41：设备台账导出
+function exportAssetsCSV(){
+  var list=(D.assets||[]).filter(function(a){return a.status!=="deleted";});
+  var rows=list.map(function(a){
+    var d=a.data||{},u=(D.uses||[]).find(function(x){return x.asset_id===a.id&&!x.return_time;});
+    return [d.type||"",d.model||"",d.sn||"",d.phone||"",d.card||"",d.platform||"",d.nickname||"",d.douyin_id||"",d.note||"",
+      ({available:"在库",in_use:"已领用",repairing:"维修中",scrapped:"已报废",shipped:"外寄中"})[a.status]||a.status,
+      (u&&u.user_name)||"",a.created_by_name||"",a.created||""];
+  });
+  exportCSV("设备台账-"+todayStr()+".csv",["类型","型号","编号","手机号","卡类型","平台","昵称","抖音ID","备注","状态","使用人","登记人","登记时间"],rows);
+  toast("已导出设备台账");
+}
+// v13.41：电话卡台账导出
+function exportSimsCSV(){
+  var list=D.simcards||[];
+  var rows=list.map(function(s){
+    var d=s.data||{},a=s.asset_id?(D.assets.find(function(x){return x.id===s.asset_id;})||{}):null;
+    return [d.sim_no||"",d.sim_type||"",d.sim_plan||"",d.sim_status||"",d.box_no||"",d.box_slot||"",d.sim_note||"",
+      a?(a.data&&a.data.model||"")+" "+a.data.sn||"":"",s.user_name||"",s.created_by_name||"",s.created||""];
+  });
+  exportCSV("电话卡台账-"+todayStr()+".csv",["卡号","运营商","套餐","状态","盒号","编号","备注","绑定手机","使用人","登记人","登记时间"],rows);
+  toast("已导出电话卡台账");
+}
+// v13.41：操作记录导出（设备操作日志）
+function exportLogsCSV(){
+  var logs=(D.logs||[]).slice().reverse();
+  var rows=logs.map(function(l){
+    var a=(D.assets||[]).find(function(x){return x.id===l.asset_id;});
+    var name=a?assetName(a.data||{}):(l.asset_id||"—");
+    return [name,l.action,l.desc||"",l.user||"",l.time||""];
+  });
+  exportCSV("操作记录-"+todayStr()+".csv",["设备","操作","详情","操作人","时间"],rows);
+  toast("已导出操作记录("+rows.length+"条)");
+}
 function todayStr(){var d=new Date(),p=function(n){return String(n).padStart(2,"0");};return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate());}
 
 // ============ 本地存储后端 ============
@@ -1881,7 +1932,7 @@ async function renderAssets(){
   var st=data.stats||{};
   var h="<div class=\"page-title\">设备台账</div><div class=\"page-desc\">全部设备登记与状态（主管可直接管理）</div>";
   h+="<div class=\"kpi-row\">"+kpiCard("设备总数","#0a84ff",st.total)+kpiCard("在库","#34c759",st.available)+kpiCard("已领用","#7c5cff",st.inUse)+kpiCard("维修中","#ff9500",st.repairing)+"</div>";
-  h+="<div class=\"filter-bar\"><select id=\"astFilter\" onchange=\"renderAssetTable()\"><option value=\"\">全部状态</option><option value=\"available\">在库</option><option value=\"in_use\">已领用</option><option value=\"shipped\">外寄中</option><option value=\"repairing\">维修中</option><option value=\"scrapped\">已报废</option></select><input id=\"astSearch\" placeholder=\"搜索名称/编号/登记人\" oninput=\"renderAssetTable()\"><button class=\"btn btn-primary\" onclick=\"showAddAsset()\">＋ 登记设备</button></div>";
+  h+="<div class=\"filter-bar\"><select id=\"astFilter\" onchange=\"renderAssetTable()\"><option value=\"\">全部状态</option><option value=\"available\">在库</option><option value=\"in_use\">已领用</option><option value=\"shipped\">外寄中</option><option value=\"repairing\">维修中</option><option value=\"scrapped\">已报废</option></select><input id=\"astSearch\" placeholder=\"搜索名称/编号/登记人\" oninput=\"renderAssetTable()\"><button class=\"btn btn-primary\" onclick=\"showAddAsset()\">＋ 登记设备</button><button class=\"btn btn-ghost\" onclick=\"exportAssetsCSV()\">📥 导出 Excel</button></div>";
   h+="<div class=\"filter-bar\" style=\"flex-wrap:wrap;gap:6px\" id=\"personBar\">加载人员…</div>";
   // v13.28：平台数量统计（抖音/快手/小红书/空 带数量，点击过滤）
   h+="<div class=\"filter-bar\" style=\"flex-wrap:wrap\" id=\"assetPlatBar\">加载平台统计…</div>";
@@ -2268,7 +2319,7 @@ async function directDelAsset(id){if(!confirm("直接删除该设备？"))return
 // ===== 主管：领用记录 =====
 async function renderUses(){
   var h="<div class=\"page-title\">领用记录</div><div class=\"page-desc\">全部设备的领用/归还/转让/外寄情况</div>";
-  h+="<div class=\"filter-bar\"><input id=\"useSearch\" placeholder=\"搜索设备/领用人\" oninput=\"renderUseTable()\"></div>";
+  h+="<div class=\"filter-bar\"><input id=\"useSearch\" placeholder=\"搜索设备/领用人\" oninput=\"renderUseTable()\"><button class=\"btn btn-ghost\" onclick=\"exportLogsCSV()\">📥 导出操作记录</button></div>";
   h+="<div class=\"card\"><div class=\"c-head\"><h3>领用记录</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th>设备</th><th>领用人</th><th>领用时间</th><th>归还时间</th><th>状态</th><th>操作</th></tr></thead><tbody id=\"useTableBody\"></tbody></table></div></div>";
   h+="<div class=\"card\"><div class=\"c-head\"><h3>转让记录<span style=\"font-size:12px;color:var(--faint);font-weight:400\">（上级仅查看，无需审核）</span></h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th>转让详情</th><th>状态</th><th>发起时间</th><th>处理时间</th></tr></thead><tbody id=\"tfTableBody\"></tbody></table></div></div>";
   h+="<div class=\"card\"><div class=\"c-head\"><h3>外寄记录<span style=\"font-size:12px;color:var(--faint);font-weight:400\">（寄出/寄回留痕）</span></h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th>设备</th><th>使用人</th><th>寄往</th><th>原因</th><th>单号</th><th>寄出时间</th><th>寄回时间</th><th>等待时长</th></tr></thead><tbody id=\"shTableBody\"></tbody></table></div></div>";
@@ -3024,7 +3075,7 @@ async function renderSims(){
     (data.sims||[]).forEach(function(s){var v=s.data&&s.data.sim_status;if(v==="在库")stS.inK++;else if(v==="在用")stS.inUse++;else if(v==="停用")stS.stop++;else if(v==="遗失")stS.lost++;});
     h+="<div class=\"kpi-row\">"+kpiCard("总卡数","#0a84ff",stS.total)+kpiCard("在库","#34c759",stS.inK)+kpiCard("在用","#7c5cff",stS.inUse)+kpiCard("停用","#ff9500",stS.stop)+kpiCard("遗失","#ff3b30",stS.lost)+"</div>";
   }
-  h+="<div class=\"filter-bar\"><input id=\"simSearch\" placeholder=\"搜索卡号/运营商/绑定手机/盒位\" oninput=\"renderSimTable()\"><button class=\"btn btn-primary\" onclick=\"showAddSim()\">＋ 登记电话卡</button></div>";
+  h+="<div class=\"filter-bar\"><input id=\"simSearch\" placeholder=\"搜索卡号/运营商/绑定手机/盒位\" oninput=\"renderSimTable()\"><button class=\"btn btn-primary\" onclick=\"showAddSim()\">＋ 登记电话卡</button>"+(isMinePage?"":"<button class=\"btn btn-ghost\" onclick=\"exportSimsCSV()\">📥 导出 Excel</button>")+"</div>";
   // v13.34/v13.35：按盒号快捷筛选（所有人可见，点盒号看该盒10张卡）+ 打印盒贴（主管/组长）
   h+="<div class=\"filter-bar\" style=\"flex-wrap:wrap\" id=\"simBoxBar\">加载盒号…</div>";
   // v13.9：主管/组长 状态快捷分类（带数量）+ 按人快捷分类（带数量）
