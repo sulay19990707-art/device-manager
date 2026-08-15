@@ -144,6 +144,15 @@ tr:hover td{background:#fafbfd}
   .chip{padding:7px 12px;font-size:12px}
   .modal{padding:20px 16px}
 }
+/* v13.48：电话卡绑定手机可搜索下拉（替代原生 select 滚动） */
+.ss-wrap{position:relative}
+.ss-input{width:100%;box-sizing:border-box;padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:14px;background:#fff}
+.ss-input:focus{outline:none;border-color:var(--accent)}
+.ss-list{position:absolute;z-index:80;top:calc(100% + 4px);left:0;right:0;max-height:260px;overflow:auto;background:#fff;border:1.5px solid var(--line);border-radius:9px;box-shadow:0 10px 30px rgba(0,0,0,.14)}
+.ss-item{padding:9px 12px;font-size:13px;cursor:pointer;border-bottom:1px solid #f1f1f1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ss-item:last-child{border-bottom:none}
+.ss-item:hover{background:var(--bg2)}
+.ss-item.ss-sel{background:var(--accent-bg);color:var(--accent);font-weight:600}
 </style>
 </head>
 <body>
@@ -3459,12 +3468,11 @@ async function showAddSim(){
   var assets=await apiGet("/api/assets");
   var simfields=data.simfields||[];
   window.__simFields=simfields;
-  var assetOpts="<option value=\"\">不绑定</option>";
-  assets.assets.forEach(function(a){assetOpts+="<option value=\""+a.id+"\">"+esc(assetName(a))+"</option>";});
+  // v13.48：绑定手机下拉改为可搜索（见 assetSelectHtml）
   showModal("<h3>登记电话卡</h3>"
     +"<div class=\"field\"><label>卡号<span class=\"req\"> *</span></label><input id=\"s_no\" placeholder=\"如：13800001234\"></div>"
     +simFieldHtml(simfields,null)
-    +"<div class=\"field\"><label>绑定手机</label><select id=\"s_asset\">"+assetOpts+"</select></div>"
+    +"<div class=\"field\"><label>绑定手机</label>"+assetSelectHtml(assets.assets,null)+"</div>"
     +"<div class=\"m-btns\"><button class=\"btn btn-ghost\" onclick=\"closeModal()\">取消</button><button class=\"btn btn-primary\" onclick=\"saveAddSim()\">确认登记</button></div><div class=\"err\" id=\"s_err\"></div>");
 }
 // v13.34/v13.36：自动分配盒号（10张一盒）——编号(手机背面编号)由手工填写
@@ -3549,15 +3557,14 @@ async function showEditSim(id){
   var d=s.data||{};
   var simfields=data.simfields||[];
   window.__simFields=simfields;
-  var assetOpts="<option value=\"\">不绑定</option>";
-  assets.assets.forEach(function(a){assetOpts+="<option value=\""+a.id+"\""+(s.asset_id===a.id?" selected":"")+">"+esc(assetName(a))+"</option>";});
+  // v13.48：绑定手机下拉改为可搜索（见 assetSelectHtml）
   // v13.8：绑定手机修改受权限开关控制（开关关→禁用下拉）
   // v13.43：绑定下拉禁用判断加总开关+主管组长不受限（否则员工开总开关也清空不了绑定手机）
   var bindLock=!allowBind&&!allowAllS&&!isMgrS;
   showModal("<h3>编辑电话卡</h3>"
     +"<div class=\"field\"><label>卡号<span class=\"req\"> *</span></label><input id=\"s_no\" value=\""+esc(d.sim_no||"")+"\"></div>"
     +simFieldHtml(simfields,d)
-    +"<div class=\"field\"><label>绑定手机"+(bindLock?"<span style=\"color:var(--orange);font-size:11px\">（需在选项管理开启权限）</span>":"")+"</label><select id=\"s_asset\""+(bindLock?" disabled":"")+">"+assetOpts+"</select></div>"
+    +"<div class=\"field\"><label>绑定手机"+(bindLock?"<span style=\"color:var(--orange);font-size:11px\">（需在选项管理开启权限）</span>":"")+"</label>"+assetSelectHtml(assets.assets,s.asset_id,bindLock)+"</div>"
     +"<div class=\"m-btns\"><button class=\"btn btn-ghost\" onclick=\"closeModal()\">取消</button><button class=\"btn btn-primary\" onclick=\"saveEditSim('"+id+"')\">保存修改</button></div><div class=\"err\" id=\"s_err\"></div>");
 }
 async function saveEditSim(id){
@@ -3570,6 +3577,39 @@ async function saveEditSim(id){
     await apiPost("/api/sims/update",{id:id,data:fd,asset_id:assetId});
     toast("已保存");closeModal();renderSimTable();
   }catch(e){document.getElementById("s_err").textContent=e.message;}
+}
+// v13.48：电话卡绑定手机可搜索下拉（点击展开→输入筛选→点选；hidden#s_asset 存 assetId，保存逻辑不变）
+function assetSelectHtml(assets, curId, disabled){
+  var opts=(assets||[]).map(function(a){return {id:a.id,label:assetName(a)};});
+  window.__ssOpts=opts;
+  var cur=opts.find(function(o){return o.id===curId;});
+  var dis=disabled?' disabled':'';
+  return '<div class="ss-wrap">'
+    +'<input id="s_asset_txt" class="ss-input"'+dis+' placeholder="搜索编号/型号…" autocomplete="off" value="'+(cur?esc(cur.label):'')+'" oninput="ssFilter()" onfocus="ssShow()" onblur="ssHide()">'
+    +'<input type="hidden" id="s_asset" value="'+(curId||'')+'">'
+    +'<div id="s_asset_list" class="ss-list" style="display:none"></div>'
+    +'</div>';
+}
+function ssRender(q){
+  var list=document.getElementById('s_asset_list');if(!list)return;
+  var opts=window.__ssOpts||[];q=(q||'').toLowerCase();
+  var curId=document.getElementById('s_asset')?document.getElementById('s_asset').value:'';
+  var html='<div class="ss-item" data-id="" onclick="ssPick(\'\')">不绑定</div>';
+  opts.forEach(function(o){
+    if(q && o.label.toLowerCase().indexOf(q)<0)return;
+    var sel=(o.id===curId)?' ss-sel':'';
+    html+='<div class="ss-item'+sel+'" data-id="'+o.id+'" onclick="ssPick(\''+o.id+'\')">'+esc(o.label)+'</div>';
+  });
+  list.innerHTML=html;
+}
+function ssShow(){var t=document.getElementById('s_asset_txt');ssRender(t?t.value:'');var l=document.getElementById('s_asset_list');if(l)l.style.display='block';}
+function ssFilter(){ssShow();}
+function ssHide(){setTimeout(function(){var l=document.getElementById('s_asset_list');if(l)l.style.display='none';},150);}
+function ssPick(id){
+  var hid=document.getElementById('s_asset');if(hid)hid.value=id||'';
+  var opts=window.__ssOpts||[];var o=opts.find(function(x){return x.id===id;});
+  var t=document.getElementById('s_asset_txt');if(t)t.value=o?o.label:'';
+  var l=document.getElementById('s_asset_list');if(l)l.style.display='none';
 }
 async function delSimF(id){if(!confirm("删除该电话卡？"))return;try{await apiDel("/api/sims/"+id);toast("已删除");renderSimTable();}catch(e){toast(e.message,"err");}}
 // v13.7：主管/组长直接退卡回仓库
