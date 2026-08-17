@@ -3228,10 +3228,13 @@ function printLabels(items,mode){
   var isBatch=mode==="batch";
   var css="@page{size:50mm 30mm;margin:0}body{font-family:'Microsoft YaHei','SimHei',sans-serif;margin:0}.label{width:50mm;height:30mm;box-sizing:border-box;border:0.5pt solid #444;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:1mm 2mm;overflow:hidden}"+(isBatch?".label{page-break-after:always}.label:last-child{page-break-after:auto}":"");
   css+=".ph{font-size:14px;font-weight:bold;letter-spacing:0.5px;white-space:nowrap}.op{font-size:12px;margin-top:2px;white-space:nowrap;color:#333}.no{font-size:14px;font-weight:bold;margin-top:2px;white-space:nowrap}";
+  // v13.51：打印设置引导条（仅屏幕显示，打印时隐藏）
+  css+=".hint{position:fixed;top:0;left:0;right:0;background:#fff8e1;color:#7a5b00;border-bottom:2px solid #ffc107;padding:10px 14px;font-size:14px;font-weight:bold;z-index:999}@media print{.hint{display:none}}body{padding-top:0}";
   function cell(it){
     return "<div class=\"label\"><div class=\"ph\">手机号："+esc(it.no||"—")+"</div><div class=\"op\">运营商："+esc(it.op||"—")+"</div><div class=\"no\">编号："+esc(it.slot||"—")+"</div></div>";
   }
   var h="<html><head><meta charset=\"utf-8\"><title>电话卡标签打印</title><style>"+css+"</style></head><body>";
+  h+="<div class=\"hint\">🖨 打印设置：打印机选「DP23 Label Printer」 · 纸张选「50×30 / 50x30mm」 · 方向「横向」 · 边距「无」 · 缩放「100%」</div>";
   var arr=isBatch?items:[items[0]];
   arr.forEach(function(it){h+=cell(it);});
   h+="<script>window.onload=function(){window.print();}</scr"+"ipt></body></html>";
