@@ -3097,7 +3097,7 @@ async function renderSims(){
     (data.sims||[]).forEach(function(s){var v=s.data&&s.data.sim_status;if(v==="在库")stS.inK++;else if(v==="在用")stS.inUse++;else if(v==="停用")stS.stop++;else if(v==="遗失")stS.lost++;});
     h+="<div class=\"kpi-row\">"+kpiCard("总卡数","#0a84ff",stS.total)+kpiCard("在库","#34c759",stS.inK)+kpiCard("在用","#7c5cff",stS.inUse)+kpiCard("停用","#ff9500",stS.stop)+kpiCard("遗失","#ff3b30",stS.lost)+"</div>";
   }
-  h+="<div class=\"filter-bar\"><input id=\"simSearch\" placeholder=\"搜索卡号/运营商/绑定设备/盒位\" oninput=\"renderSimTable()\"><button class=\"btn btn-primary\" onclick=\"showAddSim()\">＋ 登记电话卡</button>"+(isMinePage?"":"<button class=\"btn btn-ghost\" onclick=\"exportSimsCSV()\">📥 导出 Excel</button>")+"<button class=\"btn btn-ghost\" onclick=\"printSimLabels(window.__simListIds||[],'batch')\">🖨 打印本页全部标签</button></div>";
+  h+="<div class=\"filter-bar\"><input id=\"simSearch\" placeholder=\"搜索卡号/运营商/绑定设备/盒位\" oninput=\"renderSimTable()\"><button class=\"btn btn-primary\" onclick=\"showAddSim()\">＋ 登记电话卡</button>"+(isMinePage?"":"<button class=\"btn btn-ghost\" onclick=\"exportSimsCSV()\">📥 导出 Excel</button>")+"<button class=\"btn btn-ghost\" onclick=\"printSimLabels(window.__simListIds||[],'batch')\">🖨 打印本页全部标签</button> <button class=\"btn btn-ghost\" onclick=\"printTestLabel()\">🧪 打印测试页</button></div>";
   // v13.34/v13.35：按盒号快捷筛选（所有人可见，点盒号看该盒10张卡）+ 打印盒贴（主管/组长）
   h+="<div class=\"filter-bar\" style=\"flex-wrap:wrap\" id=\"simBoxBar\">加载盒号…</div>";
   // v13.9：主管/组长 状态快捷分类（带数量）+ 按人快捷分类（带数量）
@@ -3221,6 +3221,12 @@ function printBoxLabel(){
   h+="<script>window.onload=function(){window.print();}</scr"+"ipt></body></html>";
   w.document.write(h);
   w.document.close();
+}
+// v13.51：打印测试页（先验证纸张/方向/边距，确认无误再批量打，避免浪费）
+function printTestLabel(){
+  var t=new Date();
+  var ym=String(t.getFullYear())+"-"+String(t.getMonth()+1).padStart(2,"0")+"-"+String(t.getDate()).padStart(2,"0");
+  printLabels([{no:"13800001234(测试)",slot:"TEST-"+ym,op:"移动"}],"single");
 }
 // v13.51：标签打印核心（50mm×30mm 热敏标签纸，DP23）——'single'单张 / 'batch'多张连续（每张一页，连续出纸）
 function printLabels(items,mode){
@@ -3769,7 +3775,7 @@ async function renderWarehouse(){
   var isManager=(STATE.user.role==="supervisor"||STATE.user.role==="leader");
   var h="<div class=\"page-title\">仓库手机</div><div class=\"page-desc\">"+(isManager?"仓库放退回的设备，主管/组长可直接分配给员工，也可代员工申请领用":"查看仓库手机，勾选后可申请领用（需组长或主管审核同意）")+"</div>";
   // v12.7：去掉电话卡运营商筛选，只保留搜索 + 型号
-  h+="<div class=\"filter-bar\"><input id=\"whSearch\" placeholder=\"搜索型号/编号/电话卡号/登记人\" oninput=\"renderWarehouseTable()\" style=\"flex:2\"></div>";
+  h+="<div class=\"filter-bar\"><input id=\"whSearch\" placeholder=\"搜索型号/编号/电话卡号/登记人\" oninput=\"renderWarehouseTable()\" style=\"flex:2\"><button class=\"btn btn-ghost\" onclick=\"printTestLabel()\">🧪 打印测试页</button></div>";
   h+="<div class=\"filter-bar\" style=\"flex-wrap:wrap\" id=\"whModelBar\">加载型号…</div>";
   // v13.19：按退回原因快捷分类（带数量，直接显示非下拉）
   h+="<div class=\"filter-bar\" style=\"flex-wrap:wrap\" id=\"whReasonBar\">加载退回原因…</div>";
