@@ -3222,16 +3222,9 @@ function printBoxLabel(){
   w.document.write(h);
   w.document.close();
 }
-// v13.51：电话卡标签打印（50mm×30mm 热敏标签纸，DP23）——'single'单张 / 'batch'多张连续（每张一页，连续出纸）
-function printSimLabels(ids,mode){
-  if(!ids||!ids.length){toast("没有可打印的电话卡","err");return;}
-  var items=[];
-  ids.forEach(function(id){
-    var s=(D.simcards||[]).find(function(x){return x.id===id;});
-    if(!s||!s.data)return;
-    items.push({no:s.data.sim_no||"",slot:s.data.box_slot||""});
-  });
-  if(!items.length){toast("没有可打印的电话卡","err");return;}
+// v13.51：标签打印核心（50mm×30mm 热敏标签纸，DP23）——'single'单张 / 'batch'多张连续（每张一页，连续出纸）
+function printLabels(items,mode){
+  if(!items||!items.length){toast("没有可打印的标签","err");return;}
   var isBatch=mode==="batch";
   var css="@page{size:50mm 30mm;margin:0}body{font-family:'Microsoft YaHei','SimHei',sans-serif;margin:0}.label{width:50mm;height:30mm;box-sizing:border-box;border:0.5pt solid #444;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:1mm 2mm;overflow:hidden}"+(isBatch?".label{page-break-after:always}.label:last-child{page-break-after:auto}":"");
   css+=".ph{font-size:14px;font-weight:bold;letter-spacing:0.5px;white-space:nowrap}.no{font-size:14px;font-weight:bold;margin-top:3px;white-space:nowrap}";
@@ -3246,6 +3239,28 @@ function printSimLabels(ids,mode){
   if(!w){toast("请允许弹出窗口","err");return;}
   w.document.write(h);
   w.document.close();
+}
+// v13.51：电话卡标签打印（按卡 id，'single'单张 / 'batch'当前列表连续出纸）
+function printSimLabels(ids,mode){
+  var items=[];
+  (ids||[]).forEach(function(id){
+    var s=(D.simcards||[]).find(function(x){return x.id===id;});
+    if(!s||!s.data)return;
+    items.push({no:s.data.sim_no||"",slot:s.data.box_slot||""});
+  });
+  if(!items.length){toast("没有可打印的电话卡","err");return;}
+  printLabels(items,mode);
+}
+// v13.51：仓库手机/设备打印标签（手机号=绑定电话卡卡号或设备手机号；编号=卡盒内编号或设备编号）
+function printAssetLabel(id){
+  var a=(D.assets||[]).find(function(x){return x.id===id;});
+  if(!a){toast("设备不存在","err");return;}
+  var d=a.data||{};
+  // 按绑定关系找卡（绑定存在 sim 顶层 asset_id 字段；sim_no 是接口回填字段，本地不可靠）
+  var sim=(D.simcards||[]).find(function(x){return x.asset_id===a.id;});
+  var no=sim?(sim.data.sim_no||""):(d.phone||"");
+  var slot=sim?(sim.data.box_slot||""):(d.sn||"");
+  printLabels([{no:no,slot:slot}],'single');
 }
 // v13.9：领用/退卡记录（sim 申请历史）
 async function renderSimReqList(){
@@ -3895,7 +3910,7 @@ async function renderWarehouseTable(){
     // v13.2：使用人仅显示实际在用者；在库设备使用人为空（登记人另有列）
     var showUser=myUse?myUse.user_name:"";
     // v13.10：行内"领用"按钮（在库可领，提交申请→主管审核）
-    h+="<tr><td><input type=\"checkbox\" class=\"wh-chk\" value=\""+a.id+"\" "+(canTake?"":"disabled")+" onchange=\"whUpdateSel()\"></td><td><b>"+esc(d.type||"—")+"</b></td><td>"+esc(d.model||"—")+"</td><td>"+esc(d.sn||"—")+"</td><td>"+whPlatChips(a)+"</td><td>"+assetTag(a.status)+returnTag(d)+(a.status==="shipped"?(function(){var shRec=(D.shipments||[]).find(function(x){return x.asset_id===a.id&&x.status==="shipped";});return shRec&&shRec.ship_time?(" · "+shipDays(shRec.ship_time)+" 天"):"";})():"")+(canTake?"":"<br><span style=\"font-size:11px;color:var(--faint)\">不可领用</span>")+"</td>"+noteTd(d,a)+"<td>"+(showUser?"<b>"+esc(showUser)+"</b>":"<span style=\"color:var(--faint)\">—</span>")+"</td><td>"+phoneCardTd(a,d)+"</td><td>"+esc(a.created_by_name)+"</td><td class=\"num\">"+esc(a.created)+"</td><td>"+(canTake?"<button class=\"btn btn-sm btn-green\" onclick=\"whTakeOne('"+a.id+"')\">领用</button>":(a.status==="in_use"?"<button class=\"btn btn-sm btn-purple\" onclick=\"showShip('"+a.id+"')\">寄出</button>":"<span style=\"color:var(--faint);font-size:12px\">—</span>"))+"</td>"+"<td style=\"white-space:nowrap\"><button class=\"btn btn-sm btn-ghost\" onclick=\"showAssetHistory('"+a.id+"')\">📜 历史</button> <button class=\"btn btn-sm btn-ghost\" onclick=\"openEditAsset('"+a.id+"',"+(isMgr?0:1)+")\">编辑</button> "+(isMgr&&a.status!=="repairing"&&a.status!=="deleted"&&a.status!=="scrapped"?"<button class=\"btn btn-sm btn-orange\" onclick=\"showRepairAsset('"+a.id+"')\">🔧 维修</button> ":"")+(canTake?"<button class=\"btn btn-sm btn-purple\" onclick=\"showShip('"+a.id+"')\">寄出</button>":"")+"</td>"+"</tr>";
+    h+="<tr><td><input type=\"checkbox\" class=\"wh-chk\" value=\""+a.id+"\" "+(canTake?"":"disabled")+" onchange=\"whUpdateSel()\"></td><td><b>"+esc(d.type||"—")+"</b></td><td>"+esc(d.model||"—")+"</td><td>"+esc(d.sn||"—")+"</td><td>"+whPlatChips(a)+"</td><td>"+assetTag(a.status)+returnTag(d)+(a.status==="shipped"?(function(){var shRec=(D.shipments||[]).find(function(x){return x.asset_id===a.id&&x.status==="shipped";});return shRec&&shRec.ship_time?(" · "+shipDays(shRec.ship_time)+" 天"):"";})():"")+(canTake?"":"<br><span style=\"font-size:11px;color:var(--faint)\">不可领用</span>")+"</td>"+noteTd(d,a)+"<td>"+(showUser?"<b>"+esc(showUser)+"</b>":"<span style=\"color:var(--faint)\">—</span>")+"</td><td>"+phoneCardTd(a,d)+"</td><td>"+esc(a.created_by_name)+"</td><td class=\"num\">"+esc(a.created)+"</td><td>"+(canTake?"<button class=\"btn btn-sm btn-green\" onclick=\"whTakeOne('"+a.id+"')\">领用</button>":(a.status==="in_use"?"<button class=\"btn btn-sm btn-purple\" onclick=\"showShip('"+a.id+"')\">寄出</button>":"<span style=\"color:var(--faint);font-size:12px\">—</span>"))+"</td>"+"<td style=\"white-space:nowrap\"><button class=\"btn btn-sm btn-blue\" onclick=\"printAssetLabel('"+a.id+"')\">🖨 标签</button> <button class=\"btn btn-sm btn-ghost\" onclick=\"showAssetHistory('"+a.id+"')\">📜 历史</button> <button class=\"btn btn-sm btn-ghost\" onclick=\"openEditAsset('"+a.id+"',"+(isMgr?0:1)+")\">编辑</button> "+(isMgr&&a.status!=="repairing"&&a.status!=="deleted"&&a.status!=="scrapped"?"<button class=\"btn btn-sm btn-orange\" onclick=\"showRepairAsset('"+a.id+"')\">🔧 维修</button> ":"")+(canTake?"<button class=\"btn btn-sm btn-purple\" onclick=\"showShip('"+a.id+"')\">寄出</button>":"")+"</td>"+"</tr>";
   });
   if(!h)h="<tr><td colspan=\"13\" class=\"empty\">暂无符合条件的手机</td></tr>";
   document.getElementById("whBody").innerHTML=h;
