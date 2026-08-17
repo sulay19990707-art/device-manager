@@ -335,7 +335,7 @@ async function pullCloud(force){
   }catch(e){console.log("云端加载失败",e.message);}
 }
 function ensureSimData(){
-  if(!D.simfields||!D.simfields.length)D.simfields=[{id:"sim_type",label:"运营商",type:"select",options:["移动","联通","电信","其他"],required:true}];
+  if(!D.simfields||!D.simfields.length)D.simfields=[]; // v13.50：运营商改为按卡号自动识别，不再作为手填字段
   // v13.34：盒子管理字段（10张一盒，盒号纯数字1/2/3…；编号=手机背面编号，手动填）
   if(!D.simfields.some(function(f){return f.id==="box_no";}))
     D.simfields.push({id:"box_no",label:"盒号",type:"input",placeholder:"如 3（自动分配可改）",required:false});
@@ -371,7 +371,6 @@ function initDB(){
     ],
     assets:[],uses:[],repairs:[],requests:[],transfers:[],shipments:[],
     simfields:[
-      {id:"sim_type",label:"运营商",type:"select",options:["移动","联通","电信","其他"],required:true},
       {id:"sim_plan",label:"套餐",type:"input",placeholder:"如：39元/月",required:false},
       {id:"sim_status",label:"状态",type:"select",options:["在库","在用","停用","遗失"],required:false},
       {id:"sim_note",label:"备注",type:"input",placeholder:"其他说明",required:false},
@@ -2713,6 +2712,7 @@ async function renderSimFieldList(){
   var fields=data.simfields||[];
   var h="";
   fields.forEach(function(f,i){
+    if(f.id==="sim_type")return; // v13.50：运营商自动识别，不在选项管理里编辑
     h+="<div class=\"req-item\"><div class=\"r-top\"><b>"+esc(f.label)+"</b>"+(f.type==="select"?"<span class=\"tag tag-blue\">选择题</span>":"<span class=\"tag tag-purple\">填空</span>")+"<span style=\"flex:1\"></span>"
       +"<button class=\"btn btn-sm btn-ghost\" onclick=\"moveSimFieldPos('"+f.id+"','up')\" "+(i===0?"disabled":"")+">↑</button> "
       +"<button class=\"btn btn-sm btn-ghost\" onclick=\"moveSimFieldPos('"+f.id+"','down')\" "+(i===fields.length-1?"disabled":"")+">↓</button> "
@@ -3470,6 +3470,36 @@ async function simBindSave(simId, snInput){
   }catch(e){toast(e.message,"err");}
   refreshCurrent();
 }
+// v13.50：运营商按卡号自动识别（移动/联通/电信），无需手动选择
+function detectOperator(num){
+  var s=(num||"").replace(/\D/g,"");
+  if(!s)return "";
+  // ICCID：8986 + MNC(2位) 识别运营商
+  if(s.length>=6&&s.indexOf("8986")===0){
+    var mnc=s.substr(4,2);
+    if(mnc==="00"||mnc==="02"||mnc==="04")return "移动";
+    if(mnc==="01"||mnc==="06"||mnc==="09")return "联通";
+    if(mnc==="03"||mnc==="11")return "电信";
+  }
+  // 11位手机号：按号段识别运营商
+  if(s.length===11&&s.charAt(0)==="1"){
+    var p3=s.substr(0,3);
+    var YD=["134","135","136","137","138","139","147","148","150","151","152","157","158","159","172","178","182","183","184","187","188","195","197","198","165","167"];
+    var LT=["130","131","132","145","146","155","156","166","171","175","176","185","186","196"];
+    var DX=["133","149","153","173","174","177","180","181","189","190","191","193","199","162"];
+    if(YD.indexOf(p3)>=0)return "移动";
+    if(LT.indexOf(p3)>=0)return "联通";
+    if(DX.indexOf(p3)>=0)return "电信";
+  }
+  return "其他";
+}
+function previewSimType(){
+  var no=document.getElementById("s_no");
+  var el=document.getElementById("s_type_preview");
+  if(!no||!el)return;
+  var t=detectOperator(no.value);
+  el.textContent=t?("📡 "+t):"— 输入卡号后自动显示 —";
+}
 async function showAddSim(){
   var data=await apiGet("/api/sims");
   var assets=await apiGet("/api/assets");
@@ -3477,7 +3507,8 @@ async function showAddSim(){
   window.__simFields=simfields;
   // v13.48：绑定设备下拉改为可搜索（见 assetSelectHtml）
   showModal("<h3>登记电话卡</h3>"
-    +"<div class=\"field\"><label>卡号<span class=\"req\"> *</span></label><input id=\"s_no\" placeholder=\"如：13800001234\"></div>"
+    +"<div class=\"field\"><label>卡号<span class=\"req\"> *</span></label><input id=\"s_no\" placeholder=\"如：13800001234\" oninput=\"previewSimType()\"></div>"
+    +"<div class=\"field\"><label>运营商（自动识别）</label><div id=\"s_type_preview\" style=\"padding:8px 0;color:var(--accent);font-weight:600\">— 输入卡号后自动显示 —</div></div>"
     +simFieldHtml(simfields,null)
     +"<div class=\"field\"><label>绑定设备</label>"+assetSelectHtml(assets.assets,null)+"</div>"
     +"<div class=\"m-btns\"><button class=\"btn btn-ghost\" onclick=\"closeModal()\">取消</button><button class=\"btn btn-primary\" onclick=\"saveAddSim()\">确认登记</button></div><div class=\"err\" id=\"s_err\"></div>");
@@ -3504,6 +3535,7 @@ async function saveAddSim(){
   if(!no){document.getElementById("s_err").textContent="请填写卡号";return;}
   var fd=collectSimForm(window.__simFields||[]);
   fd.sim_no=no;
+  fd.sim_type=detectOperator(no); // v13.50：运营商按卡号自动识别
   // v13.34/v13.36：自动分配盒号（编号=手机背面编号，手填）
   if(!fd.box_no){
     var pos=autoBoxSlot();
@@ -3521,6 +3553,7 @@ async function saveAddSim(){
 function simFieldHtml(fields,values){
   var h="";
   (fields||[]).forEach(function(f){
+    if(f.id==="sim_type")return; // v13.50：运营商自动识别，不再作为手填字段
     var v=values&&values[f.id]!==undefined?values[f.id]:"";
     h+="<div class=\"field\"><label>"+esc(f.label)+"</label>";
     if(f.type==="select"){
@@ -3540,6 +3573,7 @@ function simFieldHtml(fields,values){
 function collectSimForm(fields){
   var fd={};
   (fields||[]).forEach(function(f){
+    if(f.id==="sim_type")return; // v13.50：运营商自动识别，不读手填
     var el=document.getElementById("sf_"+f.id);
     if(!el)return;
     if(el.classList&&el.classList.contains("chip-row")){
@@ -3568,7 +3602,8 @@ async function showEditSim(id){
   // v13.43：绑定下拉禁用判断加总开关+主管组长不受限（否则员工开总开关也清空不了绑定设备）
   var bindLock=!allowBind&&!allowAllS&&!isMgrS;
   showModal("<h3>编辑电话卡</h3>"
-    +"<div class=\"field\"><label>卡号<span class=\"req\"> *</span></label><input id=\"s_no\" value=\""+esc(d.sim_no||"")+"\"></div>"
+    +"<div class=\"field\"><label>卡号<span class=\"req\"> *</span></label><input id=\"s_no\" value=\""+esc(d.sim_no||"")+"\" oninput=\"previewSimType()\"></div>"
+    +"<div class=\"field\"><label>运营商（自动识别）</label><div id=\"s_type_preview\" style=\"padding:8px 0;color:var(--accent);font-weight:600\">"+esc(detectOperator(d.sim_no||""))+"</div></div>"
     +simFieldHtml(simfields,d)
     +"<div class=\"field\"><label>绑定设备"+(bindLock?"<span style=\"color:var(--orange);font-size:11px\">（需在选项管理开启权限）</span>":"")+"</label>"+assetSelectHtml(assets.assets,s.asset_id,bindLock)+"</div>"
     +"<div class=\"m-btns\"><button class=\"btn btn-ghost\" onclick=\"closeModal()\">取消</button><button class=\"btn btn-primary\" onclick=\"saveEditSim('"+id+"')\">保存修改</button></div><div class=\"err\" id=\"s_err\"></div>");
@@ -3578,6 +3613,7 @@ async function saveEditSim(id){
   if(!no){document.getElementById("s_err").textContent="请填写卡号";return;}
   var fd=collectSimForm(window.__simFields||[]);
   fd.sim_no=no;
+  fd.sim_type=detectOperator(no); // v13.50：运营商按卡号自动识别
   var assetId=document.getElementById("s_asset").value;
   try{
     await apiPost("/api/sims/update",{id:id,data:fd,asset_id:assetId});
