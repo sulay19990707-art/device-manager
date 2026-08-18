@@ -1572,6 +1572,8 @@ function showApp(){
   CURRENT_PAGE=(STATE.user.role==="supervisor"||STATE.user.role==="leader")?"review":"mydev";
   renderSidebar();navTo(CURRENT_PAGE);
   if(STATE.user.role==="supervisor")startWatch();
+  // v13.53：每日提醒未填存放手机的电话卡（登录后当天提醒一次）
+  setTimeout(dailySimBindRemind,1500);
 }
 var watchTimer=null,lastPendingCount=-1;
 function startWatch(){
@@ -1665,15 +1667,26 @@ async function refreshBadges(){
         var waitMe=(tf.transfers||[]).filter(function(t){return t.status==="pending"&&t.to_id===STATE.user.id;}).length;
         set("mymain",myP+waitMe);
       }catch(e){set("mymain",myP);}
-      // v13.33：我的电话卡角标 = 待签到数量
+      // v13.33：我的电话卡角标 = 待签到数量；v13.53：+ 待填存放手机数量
       try{
         var st=await apiGet("/api/settings");
         if(st.settings&&st.settings.checkin_enabled){
           var sd=await apiGet("/api/sims");
-          var need=0;
-          (sd.sims||[]).forEach(function(x){if((x.data||{}).sim_status==="在用"&&simNeedCheckin(x))need++;});
-          set("sims",need);
-        }else set("sims",0);
+          var need=0,needBind=0;
+          (sd.sims||[]).forEach(function(x){
+            if((x.data||{}).sim_status==="在用"&&simNeedCheckin(x))need++;
+            if(x.user_id===STATE.user.id&&simNeedBind(x))needBind++;
+          });
+          set("sims",need+needBind);
+        }else{
+          // 签到关闭时仅显示待填存放手机数
+          try{
+            var sd2=await apiGet("/api/sims");
+            var needBind2=0;
+            (sd2.sims||[]).forEach(function(x){if(x.user_id===STATE.user.id&&simNeedBind(x))needBind2++;});
+            set("sims",needBind2);
+          }catch(e){set("sims",0);}
+        }
       }catch(e){set("sims",0);}
     }
   }catch(e){}
@@ -3371,6 +3384,8 @@ async function renderSimTable(){
     if(kw&&((d.sim_no||"")+" "+(d.sim_type||"")+" "+(s.asset_sn||"")+" "+(s.asset_name||"")+" "+(d.box_no||"")+"号盒"+(d.box_slot||"")+"编号").indexOf(kw)<0)return;
     window.__simListIds.push(s.id);
     var bindInfo=s.asset_id?("📱 "+esc(s.asset_name)+(s.asset_phone?(" · "+esc(s.asset_phone)):(s.asset_sn?(" · 编号"+esc(s.asset_sn)):""))):"<span style=\"color:var(--faint)\">未绑定</span>";
+    // v13.53：未填存放手机的在用卡，绑定列红色警示
+    if(simNeedBind(s))bindInfo="<span style=\"color:var(--red);font-weight:600\">⚠ 未填存放手机</span>";
     // v12.6：动态字段列
     var extraTds="";
     (data.simfields||[]).forEach(function(f){
@@ -3397,7 +3412,7 @@ async function renderSimTable(){
     }else{
       bindHtml=bindInfo;
     }
-    h+="<tr><td><b>"+esc(d.sim_no||"—")+"</b>"+(d.box_no?(d.box_slot?" <span class=\"tag tag-cyan\" style=\"font-size:11px;padding:2px 8px\">"+esc(d.box_no)+"号盒 · 编号"+esc(d.box_slot)+"</span>":" <span class=\"tag tag-cyan\" style=\"font-size:11px;padding:2px 8px\">"+esc(d.box_no)+"号盒</span>"):"")+"</td><td>"+esc(d.sim_type||"—")+"</td>"+extraTds+"<td>"+bindHtml+"</td><td>"+useTd+retTag+simCheckinTag(s)+"</td><td class=\"num\">"+esc(s.created)+"</td><td style=\"white-space:nowrap\">";
+    h+="<tr><td><b>"+esc(d.sim_no||"—")+"</b>"+(d.box_no?(d.box_slot?" <span class=\"tag tag-cyan\" style=\"font-size:11px;padding:2px 8px\">"+esc(d.box_no)+"号盒 · 编号"+esc(d.box_slot)+"</span>":" <span class=\"tag tag-cyan\" style=\"font-size:11px;padding:2px 8px\">"+esc(d.box_no)+"号盒</span>"):"")+"</td><td>"+esc(d.sim_type||"—")+"</td>"+extraTds+"<td>"+bindHtml+"</td><td>"+useTd+retTag+simCheckinTag(s)+simBindTag(s)+"</td><td class=\"num\">"+esc(s.created)+"</td><td style=\"white-space:nowrap\">";
     // v13.51：打印 50×30mm 标签（手机号+编号），贴20格收纳册用
     h+="<button class=\"btn btn-sm btn-blue\" onclick=\"printSimLabels(['"+s.id+"'],'single')\">🖨 标签</button> ";
     // v13.6：员工可编辑/删除自己登记的电话卡（跟登记手机一样的原理）
@@ -3431,6 +3446,41 @@ function simNeedCheckin(s){
     if(isNaN(last))return true;
     return (Date.now()-last)>=freq;
   }catch(e){return false;}
+}
+// v13.53：待填存放手机——在用卡但没绑定手机(asset_id为空)，领用人需补充存放手机
+function simNeedBind(s){
+  try{
+    if(!s)return false;
+    var d=s.data||{};
+    if(d.sim_status!=="在用")return false;
+    return !s.asset_id;
+  }catch(e){return false;}
+}
+function simBindTag(s){
+  if(!s||!simNeedBind(s))return "";
+  return "<span class=\"tag tag-red\" style=\"font-size:11px;padding:2px 8px;margin-left:4px\" title=\"填写这张卡存放在哪台手机\">⚠ 待填存放手机</span>";
+}
+// v13.53：每日提醒——当天首次进入时提示未填存放手机的数量
+function dailySimBindRemind(){
+  try{
+    var today=new Date().toISOString().slice(0,10);
+    if(localStorage.getItem("sim_bind_remind_day")===today)return;
+    (async function(){
+      try{
+        var d=await apiGet("/api/sims");
+        var me=STATE.user;
+        var need=0;
+        (d.sims||[]).forEach(function(x){
+          if(x.user_id===me.id&&simNeedBind(x))need++;
+        });
+        if(need>0){
+          toast("📇 您有 "+need+" 张电话卡未填写存放手机，请点击「绑定设备」补充");
+          try{if(window.Notification&&Notification.permission==="granted"){new Notification("设备管理系统",{body:"您有 "+need+" 张电话卡未填写存放手机"});}}catch(e){}
+        }
+      }catch(e){}
+      localStorage.setItem("sim_bind_remind_day",today);
+    })();
+  }catch(e){}
 }
 function simCheckinTag(s){
   if(!s)return "";
