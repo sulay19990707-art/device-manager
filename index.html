@@ -226,7 +226,7 @@ function exportAssetsCSV(){
     var btp=(bsim&&bsim.data&&bsim.data.sim_type)||d.card||"";
     return [d.type||"",d.model||"",d.sn||"",bno,btp,d.platform||"",d.nickname||"",d.douyin_id||"",d.note||"",
       ({available:"在库",in_use:"已领用",repairing:"维修中",scrapped:"已报废",shipped:"外寄中"})[a.status]||a.status,
-      (u&&u.user_name)||"",a.created_by_name||"",a.created||""];
+      (u&&u.user_name)||(a.status==="available"?inStockOwner(a.created_by):""),a.created_by_name||"",a.created||""];
   });
   exportCSV("设备台账-"+todayStr()+".csv",["类型","型号","编号","电话卡号","电话卡运营商","平台","昵称","抖音ID","备注","状态","使用人","登记人","登记时间"],rows);
   toast("已导出设备台账");
@@ -237,7 +237,7 @@ function exportSimsCSV(){
   var rows=list.map(function(s){
     var d=s.data||{},a=s.asset_id?(D.assets.find(function(x){return x.id===s.asset_id;})||{}):null;
     return [d.sim_no||"",d.sim_type||"",d.sim_plan||"",d.sim_status||"",d.box_no||"",d.box_slot||"",d.sim_note||"",
-      a?(a.data&&a.data.model||"")+" "+a.data.sn||"":"",s.user_name||"",s.created_by_name||"",s.created||""];
+      a?(a.data&&a.data.model||"")+" "+a.data.sn||"":"",s.user_name||(d.sim_status==="在库"?inStockOwner(s.created_by):""),s.created_by_name||"",s.created||""];
   });
   exportCSV("电话卡台账-"+todayStr()+".csv",["卡号","运营商","套餐","状态","盒号","编号","备注","绑定设备","使用人","登记人","登记时间"],rows);
   toast("已导出电话卡台账");
@@ -1731,6 +1731,14 @@ function simTag(a){
   if(!a||!a.sim_no)return "<span style=\"color:var(--faint)\">—</span>";
   return "<span class=\"tag tag-cyan\" title=\"卡号:"+esc(a.sim_no)+"\">📇 "+esc(a.sim_no)+"</span>";
 }
+// v13.52：在库/未领用资源归属——归登记人的上级（员工→其组长/主管；组长→自己；主管→自己）
+function inStockOwner(created_by){
+  var u=D.users.find(function(x){return x.id===created_by;});
+  if(!u)return "";
+  if(u.role!=="member")return u.name;
+  var up=D.users.find(function(x){return x.id===u.parent_id;});
+  return up?up.name:"";
+}
 // v13.49：设备台账"电话卡"列 = 绑定的电话卡（卡号·运营商），与电话卡双向互联；无绑定时回退到设备自填手机号
 function phoneCardTd(a,d){
   var no=(a&&a.sim_no)?a.sim_no:((d&&d.phone)?d.phone:"");
@@ -2061,8 +2069,8 @@ async function renderAssetTable(){
   list.forEach(function(a){
     var d=a.data||{};
     var myUse=useData.uses.find(function(x){return x.asset_id===a.id&&!x.return_time;});
-    // v13.2：使用人仅显示实际在用者；退回仓库后在库设备使用人为空
-    var showUser=myUse?myUse.user_name:"";
+    // v13.2：使用人仅显示实际在用者；v13.52：在库设备归属主管/组长（登记人的上级）
+    var showUser=myUse?myUse.user_name:(a.status==="available"?inStockOwner(a.created_by):"");
     // v12.6：动态字段列（v13.1：抖音ID/昵称对员工隔离——只显示自己使用中的手机，别人的隐藏）
     // v13.4：平台/是否有抖音号 常驻快捷选择（点选即存）；其他列单击编辑
     var extraTds="";
@@ -3038,7 +3046,7 @@ async function renderSimWhTable(){
     var bindInfo=s.asset_id?("📱 "+esc(s.asset_name)+(s.asset_phone?(" · "+esc(s.asset_phone)):(s.asset_sn?(" · 编号"+esc(s.asset_sn)):""))):"<span style=\"color:var(--faint)\">未绑定</span>";
     // v13.10：行内"领用"按钮（在库卡，提交申请→主管审核）
     var swTake=(d.sim_status==="在库"&&!s.user_id);
-    h+="<tr><td><input type=\"checkbox\" class=\"sw-chk\" value=\""+s.id+"\" onchange=\"swUpdateSel()\"></td><td><b>"+esc(d.sim_no||"—")+"</b></td><td>"+esc(d.sim_type||"—")+"</td><td>"+bindInfo+returnTag(d)+"</td><td>"+(s.user_id?(esc(s.user_name||"—")+" <span class=\"tag tag-blue\" style=\"font-size:11px;padding:2px 8px\">在用</span>"):esc(s.created_by_name||"—"))+"</td><td class=\"num\">"+esc(s.created)+"</td><td>"+(swTake?"<button class=\"btn btn-sm btn-green\" onclick=\"swTakeOne('"+s.id+"')\">领用</button>":"<span style=\"color:var(--faint);font-size:12px\">—</span>")+"</td>"+(isMgr||allowAll?"<td style=\"white-space:nowrap\"><button class=\"btn btn-sm btn-ghost\" onclick=\"showEditSim('"+s.id+"')\">编辑</button> "+(isMgr?"<button class=\"btn btn-sm btn-danger\" onclick=\"delSimF('"+s.id+"')\">删除</button>":"")+"</td>":"")+"</tr>";
+    h+="<tr><td><input type=\"checkbox\" class=\"sw-chk\" value=\""+s.id+"\" onchange=\"swUpdateSel()\"></td><td><b>"+esc(d.sim_no||"—")+"</b></td><td>"+esc(d.sim_type||"—")+"</td><td>"+bindInfo+returnTag(d)+"</td><td>"+(s.user_id?(esc(s.user_name||"—")+" <span class=\"tag tag-blue\" style=\"font-size:11px;padding:2px 8px\">在用</span>"):esc(inStockOwner(s.created_by)||s.created_by_name||"—"))+"</td><td class=\"num\">"+esc(s.created)+"</td><td>"+(swTake?"<button class=\"btn btn-sm btn-green\" onclick=\"swTakeOne('"+s.id+"')\">领用</button>":"<span style=\"color:var(--faint);font-size:12px\">—</span>")+"</td>"+(isMgr||allowAll?"<td style=\"white-space:nowrap\"><button class=\"btn btn-sm btn-ghost\" onclick=\"showEditSim('"+s.id+"')\">编辑</button> "+(isMgr?"<button class=\"btn btn-sm btn-danger\" onclick=\"delSimF('"+s.id+"')\">删除</button>":"")+"</td>":"")+"</tr>";
   });
   if(!h)h="<tr><td colspan=\""+(isMgr?8:7)+"\" class=\"empty\">暂无在库电话卡</td></tr>";
   document.getElementById("swBody").innerHTML=h;
@@ -3377,7 +3385,8 @@ async function renderSimTable(){
     // v13.7：使用人 = 领用者；在用卡可退回仓库；审核中标记
     var isUseMine=s.user_id===STATE.user.id;
     var myReq=reqs.find(function(x){return x.sim_id===s.id&&x.status==="pending";});
-    var useTd=esc(s.user_name||"—");
+    // v13.52：使用人 = 领用者；在库卡归属主管/组长（登记人的上级）
+    var useTd=s.user_name?esc(s.user_name):(d.sim_status==="在库"?esc(inStockOwner(s.created_by)||"—"):"—");
     if(myReq)useTd+=" <span class=\"tag tag-orange\" style=\"font-size:11px;padding:2px 8px\">审核中</span>";
     // v13.12：退回原因/备注标签（卡退回后在库，显示在所有页面直到再次领用或被修改）
     var retTag=returnTag(d);
@@ -3917,8 +3926,8 @@ async function renderWarehouseTable(){
     if(kw&&(assetName(a)+" "+(d.model||"")+" "+(d.phone||"")+" "+(d.sn||"")+" "+(d.note||"")+" "+a.created_by_name).indexOf(kw)<0)return;
     var canTake=a.status==="available";
     var myUse=useData.uses.find(function(x){return x.asset_id===a.id&&!x.return_time;});
-    // v13.2：使用人仅显示实际在用者；在库设备使用人为空（登记人另有列）
-    var showUser=myUse?myUse.user_name:"";
+    // v13.2：使用人仅显示实际在用者；v13.52：在库设备归属主管/组长（登记人的上级）
+    var showUser=myUse?myUse.user_name:(a.status==="available"?inStockOwner(a.created_by):"");
     // v13.10：行内"领用"按钮（在库可领，提交申请→主管审核）
     h+="<tr><td><input type=\"checkbox\" class=\"wh-chk\" value=\""+a.id+"\" "+(canTake?"":"disabled")+" onchange=\"whUpdateSel()\"></td><td><b>"+esc(d.type||"—")+"</b></td><td>"+esc(d.model||"—")+"</td><td>"+esc(d.sn||"—")+"</td><td>"+whPlatChips(a)+"</td><td>"+assetTag(a.status)+returnTag(d)+(a.status==="shipped"?(function(){var shRec=(D.shipments||[]).find(function(x){return x.asset_id===a.id&&x.status==="shipped";});return shRec&&shRec.ship_time?(" · "+shipDays(shRec.ship_time)+" 天"):"";})():"")+(canTake?"":"<br><span style=\"font-size:11px;color:var(--faint)\">不可领用</span>")+"</td>"+noteTd(d,a)+"<td>"+(showUser?"<b>"+esc(showUser)+"</b>":"<span style=\"color:var(--faint)\">—</span>")+"</td><td>"+phoneCardTd(a,d)+"</td><td>"+esc(a.created_by_name)+"</td><td class=\"num\">"+esc(a.created)+"</td><td>"+(canTake?"<button class=\"btn btn-sm btn-green\" onclick=\"whTakeOne('"+a.id+"')\">领用</button>":(a.status==="in_use"?"<button class=\"btn btn-sm btn-purple\" onclick=\"showShip('"+a.id+"')\">寄出</button>":"<span style=\"color:var(--faint);font-size:12px\">—</span>"))+"</td>"+"<td style=\"white-space:nowrap\"><button class=\"btn btn-sm btn-blue\" onclick=\"printAssetLabel('"+a.id+"')\">🖨 标签</button> <button class=\"btn btn-sm btn-ghost\" onclick=\"showAssetHistory('"+a.id+"')\">📜 历史</button> <button class=\"btn btn-sm btn-ghost\" onclick=\"openEditAsset('"+a.id+"',"+(isMgr?0:1)+")\">编辑</button> "+(isMgr&&a.status!=="repairing"&&a.status!=="deleted"&&a.status!=="scrapped"?"<button class=\"btn btn-sm btn-orange\" onclick=\"showRepairAsset('"+a.id+"')\">🔧 维修</button> ":"")+(canTake?"<button class=\"btn btn-sm btn-purple\" onclick=\"showShip('"+a.id+"')\">寄出</button>":"")+"</td>"+"</tr>";
   });
@@ -4030,8 +4039,8 @@ async function renderMyDevList(){
       if(d.douyin_id)acc+=(acc?"<br>":"")+"<span style=\"font-size:12px;color:var(--sub)\">"+esc(d.douyin_id)+"</span>";
       if(acc)accTd="<td>"+acc+"</td>";
     }
-    // v13.2：使用人仅显示实际在用者；在库设备使用人为空
-    var showUser=myUse?myUse.user_name:"";
+    // v13.2：使用人仅显示实际在用者；v13.52：在库设备归属主管/组长（登记人的上级）
+    var showUser=myUse?myUse.user_name:(a.status==="available"?inStockOwner(a.created_by):"");
     h+="<tr><td>"+esc(d.type||"—")+"</td><td>"+esc(d.model||"—")+"</td><td>"+esc(d.sn||"—")+" <button class=\"link-btn\" onclick=\"showScanModal('"+a.id+"')\" title=\"拍照识别抖音账号\">📷</button></td>"+accTd+"<td style=\"white-space:nowrap\">"+whPlatChips(a)+"</td><td>"+phoneCardTd(a,d)+"</td><td>"+assetTag(a.status)+returnTag(d)+(showUser?"<br><span style=\"font-size:11px;color:var(--faint)\">使用人："+esc(showUser)+"</span>":"")+(myReq?"<br><span style=\"font-size:11px;color:var(--orange)\">审核中</span>":"")+"</td>"+noteTd(d,a)+"<td style=\"white-space:nowrap\">";
     if(a.status==="in_use"){
       h+="<button class=\"btn btn-sm btn-orange\" onclick=\"reqReturn('"+a.id+"')\">退回仓库</button> ";
