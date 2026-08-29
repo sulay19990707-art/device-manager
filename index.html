@@ -461,6 +461,21 @@ function delUser(tk,id){
   }
   sv();return[200,{ok:true}];
 }
+// v13.54：主管分配组员到组长下（leader_id 为空则调回主管直属）
+function assignUser(tk,b){
+  var u=verify(tk);if(!u)return[401,{error:"未登录"}];
+  if(u.role!=="supervisor")return[403,{error:"只有主管可分配组员"}];
+  var m=D.users.find(function(x){return x.id===b.id;});
+  if(!m||m.role!=="member")return[404,{error:"员工不存在"}];
+  if(b.leader_id){
+    var l=D.users.find(function(x){return x.id===b.leader_id;});
+    if(!l||l.role!=="leader")return[400,{error:"组长不存在"}];
+    m.parent_id=l.id;
+  }else{
+    m.parent_id=u.id;
+  }
+  sv();return[200,{ok:true}];
+}
 function postChangePwd(tk,b){
   var u=verify(tk);if(!u)return[401,{error:"未登录"}];
   if(!b.old||!b.pwd)return[400,{error:"参数不完整"}];
@@ -1459,6 +1474,7 @@ function route(method,path,tk,body){
   if(path==="/api/actions/edit_asset"&&method==="POST")return editAsset(tk,body);
   if(path==="/api/actions/edit_my_asset"&&method==="POST")return editMyAsset(tk,body);
   if(path==="/api/users/update"&&method==="POST")return updateUser(tk,body);
+  if(path==="/api/users/assign"&&method==="POST")return assignUser(tk,body);
   if(path==="/api/actions/to_warehouse"&&method==="POST")return toWarehouse(tk,body);
   if(path==="/api/sims"&&method==="GET")return getSims(tk);
   if(path==="/api/sims"&&method==="POST")return postSim(tk,body);
@@ -2871,7 +2887,7 @@ async function renderLeaderTable(){
   var h="";
   (data.users||[]).forEach(function(l){
     if(l.role!=="leader")return;
-    h+="<tr><td><b>"+esc(l.name)+"</b></td><td>"+esc(l.username)+"</td><td class=\"num\">"+(l.members?l.members.length:0)+"</td><td style=\"white-space:nowrap\"><button class=\"btn btn-sm btn-ghost\" onclick=\"showLeaderMembers('"+l.id+"','"+esc(l.name)+"')\">查看组员</button> <button class=\"btn btn-sm btn-ghost\" onclick=\"showEditUser('"+l.id+"')\">编辑</button> <button class=\"btn btn-sm btn-danger\" onclick=\"delMember('"+l.id+"')\">删除</button></td></tr>";
+    h+="<tr><td><b>"+esc(l.name)+"</b></td><td>"+esc(l.username)+"</td><td class=\"num\">"+(l.members?l.members.length:0)+"</td><td style=\"white-space:nowrap\"><button class=\"btn btn-sm btn-ghost\" onclick=\"showLeaderMembers('"+l.id+"','"+esc(l.name)+"')\">查看组员</button> <button class=\"btn btn-sm btn-green\" onclick=\"showAssignToLeader('"+l.id+"','"+esc(l.name)+"')\">＋ 添加组员</button> <button class=\"btn btn-sm btn-ghost\" onclick=\"showEditUser('"+l.id+"')\">编辑</button> <button class=\"btn btn-sm btn-danger\" onclick=\"delMember('"+l.id+"')\">删除</button></td></tr>";
   });
   if(!h)h="<tr><td colspan=\"4\" class=\"empty\">暂无组长，点击右上角添加</td></tr>";
   document.getElementById("leaderTableBody").innerHTML=h;
@@ -2880,7 +2896,7 @@ async function renderDirectMembers(){
   var data=await apiGet("/api/users");
   var h="";
   (data.users||[]).filter(function(m){return m.role==="member";}).forEach(function(m){
-    h+="<tr><td><b>"+esc(m.name)+"</b></td><td>"+esc(m.username)+"</td><td class=\"num\">"+esc(m.created)+"</td><td style=\"white-space:nowrap\"><button class=\"btn btn-sm btn-ghost\" onclick=\"showEditUser('"+m.id+"')\">编辑</button> <button class=\"btn btn-sm btn-danger\" onclick=\"delMember('"+m.id+"')\">删除</button></td></tr>";
+    h+="<tr><td><b>"+esc(m.name)+"</b></td><td>"+esc(m.username)+"</td><td class=\"num\">"+esc(m.created)+"</td><td style=\"white-space:nowrap\"><button class=\"btn btn-sm btn-green\" onclick=\"showAssignMember('"+m.id+"','"+esc(m.name)+"')\">分配组</button> <button class=\"btn btn-sm btn-ghost\" onclick=\"showEditUser('"+m.id+"')\">编辑</button> <button class=\"btn btn-sm btn-danger\" onclick=\"delMember('"+m.id+"')\">删除</button></td></tr>";
   });
   if(!h)h="<tr><td colspan=\"4\" class=\"empty\">暂无直属员工，点击右上角添加</td></tr>";
   document.getElementById("directMemberBody").innerHTML=h;
@@ -2926,6 +2942,40 @@ async function saveEditUser(id){
     toast("账号已修改");closeModal();
     if(STATE.user.role==="supervisor"){renderLeaderTable();renderDirectMembers();}else{renderMemberTable();}
   }catch(e){document.getElementById("eu_err").textContent=e.message;}
+}
+// v13.54：主管把直属员工分配到组长下
+async function showAssignToLeader(id,name){
+  var data=await apiGet("/api/users");
+  var directs=(data.users||[]).filter(function(x){return x.role==="member";});
+  if(!directs.length){toast("暂无直属员工可分配","err");return;}
+  var opts=directs.map(function(m){return "<option value=\""+m.id+"\">"+esc(m.name)+"（"+esc(m.username)+"）</option>";}).join("");
+  showModal("<h3>给「"+esc(name)+"」添加组员</h3>"
+    +"<div class=\"field\"><label>选择要分配到该组的员工</label><select id=\"al_sel\">"+opts+"</select></div>"
+    +"<div class=\"m-btns\"><button class=\"btn btn-ghost\" onclick=\"closeModal()\">取消</button><button class=\"btn btn-primary\" onclick=\"doAssignToLeader('"+id+"')\">确认分配</button></div><div class=\"err\" id=\"al_err\"></div>");
+}
+async function doAssignToLeader(id){
+  var uid=document.getElementById("al_sel").value;
+  try{
+    await apiPost("/api/users/assign",{id:uid,leader_id:id});
+    toast("已分配到该组");closeModal();renderLeaderTable();renderDirectMembers();
+  }catch(e){document.getElementById("al_err").textContent=e.message;}
+}
+// v13.54：主管把某直属员工分配到指定组长下（可改组）
+async function showAssignMember(id,name){
+  var data=await apiGet("/api/users");
+  var leaders=(data.users||[]).filter(function(x){return x.role==="leader";});
+  if(!leaders.length){toast("暂无组长可分配","err");return;}
+  var opts=leaders.map(function(l){return "<option value=\""+l.id+"\">"+esc(l.name)+"</option>";}).join("");
+  showModal("<h3>分配「"+esc(name)+"」到组长组</h3>"
+    +"<div class=\"field\"><label>选择目标组长</label><select id=\"am_sel\">"+opts+"</select></div>"
+    +"<div class=\"m-btns\"><button class=\"btn btn-ghost\" onclick=\"closeModal()\">取消</button><button class=\"btn btn-primary\" onclick=\"doAssignMember('"+id+"')\">确认分配</button></div><div class=\"err\" id=\"am_err\"></div>");
+}
+async function doAssignMember(id){
+  var lid=document.getElementById("am_sel").value;
+  try{
+    await apiPost("/api/users/assign",{id:id,leader_id:lid});
+    toast("分配成功");closeModal();renderLeaderTable();renderDirectMembers();
+  }catch(e){document.getElementById("am_err").textContent=e.message;}
 }
 function showAddMember(){
   showModal("<h3>添加员工</h3>"
