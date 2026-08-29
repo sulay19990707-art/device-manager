@@ -1542,7 +1542,7 @@ window.fetch=function(url,opts){
 
 // ============ 前端 ============
 var ROLE_LABELS={supervisor:"主管",leader:"组长",member:"员工"};
-var STATE={user:null},CURRENT_PAGE="",ASSET_FILTER="",MYDEV_TYPE="",WH_MODEL="",WH_STATUS="available",WH_REASON="",WH_PLATFORM="",ASSET_PLATFORM="",REVIEW_FILTER="",REVIEW_KW="",REVIEW_USER="",REVIEW_DONE_TYPE="",REVIEW_DONE_USER="",SHIP_FILTER_REASON="",SHIP_FILTER_USER="",SHIP_FILTER_MODEL="",SIM_FILTER_USER="",SIM_STATUS_FILTER="",SIM_CHECKIN_FILTER="",SIM_BOX_FILTER="",SIM_WH_STATUS="",SIM_WH_TYPE="";
+var STATE={user:null},CURRENT_PAGE="",ASSET_FILTER="",ASSET_GROUP="",MYDEV_TYPE="",WH_MODEL="",WH_STATUS="available",WH_REASON="",WH_PLATFORM="",ASSET_PLATFORM="",REVIEW_FILTER="",REVIEW_KW="",REVIEW_USER="",REVIEW_DONE_TYPE="",REVIEW_DONE_USER="",SHIP_FILTER_REASON="",SHIP_FILTER_USER="",SHIP_FILTER_MODEL="",SIM_FILTER_USER="",SIM_STATUS_FILTER="",SIM_CHECKIN_FILTER="",SIM_BOX_FILTER="",SIM_WH_STATUS="",SIM_WH_TYPE="";
 var REQ_TYPES={take:["领用","tag-blue"],repair:["报修","tag-orange"],return:["退还","tag-purple"],delete:["删除","tag-red"],edit:["修改","tag-purple"],ship:["寄出","tag-purple"],sim_take:["领卡","tag-blue"],sim_return:["退卡","tag-purple"],sim_transfer:["转卡","tag-purple"]};
 var REQ_STATUS={pending:["待审核","tag-orange"],approved:["已同意","tag-green"],rejected:["已拒绝","tag-red"],cancelled:["已撤销","tag-gray"]};
 
@@ -1995,6 +1995,10 @@ async function renderAssets(){
   h+="<div class=\"kpi-row\">"+kpiCard("设备总数","#0a84ff",st.total)+kpiCard("在库","#34c759",st.available)+kpiCard("已领用","#7c5cff",st.inUse)+kpiCard("维修中","#ff9500",st.repairing)+"</div>";
   h+="<div class=\"filter-bar\"><select id=\"astFilter\" onchange=\"renderAssetTable()\"><option value=\"\">全部状态</option><option value=\"available\">在库</option><option value=\"in_use\">已领用</option><option value=\"shipped\">外寄中</option><option value=\"repairing\">维修中</option><option value=\"scrapped\">已报废</option></select><input id=\"astSearch\" placeholder=\"搜索名称/编号/登记人\" oninput=\"renderAssetTable()\"><button class=\"btn btn-primary\" onclick=\"showAddAsset()\">＋ 登记设备</button><button class=\"btn btn-ghost\" onclick=\"exportAssetsCSV()\">📥 导出 Excel</button></div>";
   h+="<div class=\"filter-bar\" style=\"flex-wrap:wrap;gap:6px\" id=\"personBar\">加载人员…</div>";
+  // v13.55：主管按组查看——点组长芯片只看该组设备台账
+  if(STATE.user.role==="supervisor"){
+    h+="<div class=\"filter-bar\" style=\"flex-wrap:wrap;gap:6px\" id=\"groupBar\">加载分组…</div>";
+  }
   // v13.28：平台数量统计（抖音/快手/小红书/空 带数量，点击过滤）
   h+="<div class=\"filter-bar\" style=\"flex-wrap:wrap\" id=\"assetPlatBar\">加载平台统计…</div>";
   // v12.6：动态字段列（除固定4列外，自定义字段自动成为列）
@@ -2007,6 +2011,45 @@ async function renderAssets(){
   document.getElementById("content").innerHTML=h;
   renderPersonBar();
   renderAssetPlatBar();
+  if(STATE.user.role==="supervisor")renderGroupBar();
+  renderAssetTable();
+}
+// v13.55：主管按组查看设备台账——点组长芯片只看该组（组长+其组员）的设备
+async function renderGroupBar(){
+  var bar=document.getElementById("groupBar");if(!bar)return;
+  try{
+    var assetsData=await apiGet("/api/assets");
+    var assets=assetsData.assets||[];
+    // 统计用本地全量 D.users（含 parent_id），不受接口字段裁剪影响
+    var membersOf={};
+    (D.users||[]).forEach(function(u){
+      if(u.role==="member"&&u.parent_id)membersOf[u.parent_id]=(membersOf[u.parent_id]||[]).concat([u.id]);
+    });
+    // 组设备口径：登记人 = 组长本人 或 该组组员（在库/在用都算）
+    function groupAssets(leaderId){
+      var ids=[leaderId].concat(membersOf[leaderId]||[]);
+      return assets.filter(function(a){return ids.indexOf(a.created_by)>=0;});
+    }
+    var leaders=(D.users||[]).filter(function(x){return x.role==="leader";});
+    var h="<span style=\"font-size:12px;color:var(--faint);line-height:28px\">按组查看：</span>";
+    h+="<span class=\"chip"+(ASSET_GROUP===""?" on":"")+"\" data-v=\"\" onclick=\"filterByGroup(this)\">👥 全部 ("+assets.length+")</span>";
+    leaders.forEach(function(l){
+      var ga=groupAssets(l.id);
+      h+="<span class=\"chip"+(ASSET_GROUP===l.id?" on":"")+"\" data-v=\""+l.id+"\" onclick=\"filterByGroup(this)\">📁 "+esc(l.name)+"组 ("+ga.length+")</span>";
+    });
+    // 直属员工（parent=主管）也单独算一组
+    var direct=(D.users||[]).filter(function(x){return x.role==="member"&&x.parent_id===STATE.user.id;});
+    if(direct.length){
+      var dIds=direct.map(function(x){return x.id;});
+      var cntD=assets.filter(function(a){return dIds.indexOf(a.created_by)>=0;}).length;
+      h+="<span class=\"chip"+(ASSET_GROUP==="direct"?" on":"")+"\" data-v=\"direct\" onclick=\"filterByGroup(this)\">📁 直属员工 ("+cntD+")</span>";
+    }
+    bar.innerHTML=h;
+  }catch(e){bar.innerHTML="";}
+}
+function filterByGroup(el){
+  ASSET_GROUP=el.getAttribute("data-v");
+  renderGroupBar();
   renderAssetTable();
 }
 async function renderPersonBar(){
@@ -2086,6 +2129,12 @@ async function renderAssetTable(){
   var kw=document.getElementById("astSearch")?(document.getElementById("astSearch").value||"").trim():"";
   // v13.24：按人查看过滤=当前在用者；退回仓库(无在用)不归任何人，只在全部显示
   var userMatch=function(a){if(!ASSET_FILTER)return true;var u2=(useData.uses||[]).find(function(x){return x.asset_id===a.id&&!x.return_time;});return u2&&u2.user_id===ASSET_FILTER;};
+  // v13.55：按组过滤（主管）——只看该组（组长+组员）登记的设备
+  var groupMatch=function(a){
+    if(!ASSET_GROUP||STATE.user.role!=="supervisor")return true;
+    if(ASSET_GROUP==="direct")return D.users.some(function(x){return x.role==="member"&&x.parent_id===STATE.user.id&&x.id===a.created_by;});
+    return a.created_by===ASSET_GROUP||D.users.some(function(x){return x.role==="member"&&x.parent_id===ASSET_GROUP&&x.id===a.created_by;});
+  };
   // v13.28：按平台过滤（抖音/快手/小红书 多选匹配，空=未选平台）
   var platMatch=function(a){
     if(!ASSET_PLATFORM)return true;
@@ -2093,7 +2142,7 @@ async function renderAssetTable(){
     if(ASSET_PLATFORM==="空")return !wp.length;
     return wp.indexOf(ASSET_PLATFORM)>=0;
   };
-  var list=data.assets.filter(function(a){return userMatch(a)&&platMatch(a)&&(!f||a.status===f)&&(!kw||(assetName(a)+" "+(a.data&&a.data.sn||"")+" "+(a.data&&a.data.model||"")+" "+(a.data&&a.data.phone||"")+" "+(a.data&&a.data.nickname||"")+" "+(a.data&&a.data.douyin_id||"")+" "+(a.data&&a.data.note||"")+" "+a.created_by_name).indexOf(kw)>=0);});
+  var list=data.assets.filter(function(a){return userMatch(a)&&groupMatch(a)&&platMatch(a)&&(!f||a.status===f)&&(!kw||(assetName(a)+" "+(a.data&&a.data.sn||"")+" "+(a.data&&a.data.model||"")+" "+(a.data&&a.data.phone||"")+" "+(a.data&&a.data.nickname||"")+" "+(a.data&&a.data.douyin_id||"")+" "+(a.data&&a.data.note||"")+" "+a.created_by_name).indexOf(kw)>=0);});
   var h="";
   list.forEach(function(a){
     var d=a.data||{};
