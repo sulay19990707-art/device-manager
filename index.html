@@ -548,7 +548,7 @@ function delReturnOpt(tk,v){
 }
 function getSettings(tk){
   var u=verify(tk);if(!u)return[401,{error:"未登录"}];
-  return[200,{settings:D.settings||{allow_edit_phone:false,allow_edit_sim_bind:false,checkin_enabled:false,checkin_freq_days:3,checkin_msg:"请确认您的电话卡还在手上，丢失请立即上报！",allow_edit_sim_box:false,allow_edit_all_sim:false}}];
+  return[200,{settings:D.settings||{allow_edit_phone:false,allow_edit_sim_bind:false,checkin_enabled:false,checkin_freq_days:3,checkin_msg:"请确认您的电话卡还在手上，丢失请立即上报！",allow_edit_sim_box:false,allow_edit_all_sim:false,leader_see_all_warehouse:[]}}];
 }
 function saveSettings(tk,b){
   var u=verify(tk);if(!u)return[401,{error:"未登录"}];
@@ -562,13 +562,16 @@ function saveSettings(tk,b){
   if(typeof b.checkin_msg==="string")D.settings.checkin_msg=b.checkin_msg;
   if(typeof b.allow_edit_sim_box==="boolean")D.settings.allow_edit_sim_box=b.allow_edit_sim_box;
   if(typeof b.allow_edit_all_sim==="boolean")D.settings.allow_edit_all_sim=b.allow_edit_all_sim;
+  // v13.56：组长可看总仓库开关（数组存组长id）
+  if(Array.isArray(b.leader_see_all_warehouse))D.settings.leader_see_all_warehouse=b.leader_see_all_warehouse;
   sv();return[200,{ok:true,settings:D.settings}];
 }
 function getSims(tk){
   var u=verify(tk);if(!u)return[401,{error:"未登录"}];
   var list=D.simcards||[];
   // v12.10：电话卡按组隔离——组长只看自己组的，员工只看本组（组长+组员）
-  if(u.role==="leader"){
+  // v13.56：开了"看总仓库"开关的组长，跳过隔离看全部电话卡
+  if(u.role==="leader"&&!leaderCanSeeAllWarehouse(u)){
     list=list.filter(function(s){return inScope(u,s.created_by);});
   }else if(u.role==="member"){
     var simLeader=D.users.find(function(x){return x.id===u.parent_id;});
@@ -1038,13 +1041,20 @@ function moveOption(tk,b){
   var t=f.options[i];f.options[i]=f.options[j];f.options[j]=t;
   sv();return[200,{ok:true}];
 }
+// v13.56：组长是否有权看总仓库（手机+电话卡）——主管在账号管理页按组长开关
+function leaderCanSeeAllWarehouse(u){
+  if(!u||u.role!=="leader")return false;
+  var arr=(D.settings&&D.settings.leader_see_all_warehouse)||[];
+  return arr.indexOf(u.id)>=0;
+}
 function getWarehouse(tk){
   var u=verify(tk);if(!u)return[401,{error:"未登录"}];
   var list=D.assets.filter(function(a){
     return a.status!=="deleted";
   });
   // v12.5：数据隔离——组长只能看自己组的设备，员工只能看本组（组长+组员）设备
-  if(u.role==="leader"){
+  // v13.56：开了"看总仓库"开关的组长，跳过隔离看全部仓库
+  if(u.role==="leader"&&!leaderCanSeeAllWarehouse(u)){
     list=list.filter(function(a){return inScope(u,a.created_by);});
   }else if(u.role==="member"){
     var leader=D.users.find(function(x){return x.id===u.parent_id;});
@@ -2917,7 +2927,7 @@ async function renderMembers(){
   if(role==="supervisor"){
     var h="<div class=\"page-title\">账号管理</div><div class=\"page-desc\">管理组长账号和直属员工账号</div>";
     h+="<div class=\"mb\"><button class=\"btn btn-primary\" onclick=\"showAddLeader()\">＋ 添加组长</button> <button class=\"btn btn-primary\" onclick=\"showAddMember()\">＋ 添加员工</button></div>";
-    h+="<div class=\"card\"><div class=\"c-head\"><h3>组长账号</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th>组长</th><th>账号</th><th>组员数</th><th>操作</th></tr></thead><tbody id=\"leaderTableBody\"></tbody></table></div></div>";
+    h+="<div class=\"card\"><div class=\"c-head\"><h3>组长账号</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th>组长</th><th>账号</th><th>组员数</th><th>看总仓库</th><th>操作</th></tr></thead><tbody id=\"leaderTableBody\"></tbody></table></div></div>";
     h+="<div class=\"card\"><div class=\"c-head\"><h3>直属员工</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th>姓名</th><th>账号</th><th>创建时间</th><th>操作</th></tr></thead><tbody id=\"directMemberBody\"></tbody></table></div></div>";
     document.getElementById("content").innerHTML=h;
     renderLeaderTable();
@@ -2933,13 +2943,30 @@ async function renderMembers(){
 }
 async function renderLeaderTable(){
   var data=await apiGet("/api/users");
+  var settData=await apiGet("/api/settings");
+  var wh=(settData.settings&&settData.settings.leader_see_all_warehouse)||[];
   var h="";
   (data.users||[]).forEach(function(l){
     if(l.role!=="leader")return;
-    h+="<tr><td><b>"+esc(l.name)+"</b></td><td>"+esc(l.username)+"</td><td class=\"num\">"+(l.members?l.members.length:0)+"</td><td style=\"white-space:nowrap\"><button class=\"btn btn-sm btn-ghost\" onclick=\"showLeaderMembers('"+l.id+"','"+esc(l.name)+"')\">查看组员</button> <button class=\"btn btn-sm btn-green\" onclick=\"showAssignToLeader('"+l.id+"','"+esc(l.name)+"')\">＋ 添加组员</button> <button class=\"btn btn-sm btn-ghost\" onclick=\"showEditUser('"+l.id+"')\">编辑</button> <button class=\"btn btn-sm btn-danger\" onclick=\"delMember('"+l.id+"')\">删除</button></td></tr>";
+    var on=wh.indexOf(l.id)>=0;
+    // v13.56：看总仓库开关（主管控制组长能否看全部仓库手机+电话卡）
+    h+="<tr><td><b>"+esc(l.name)+"</b></td><td>"+esc(l.username)+"</td><td class=\"num\">"+(l.members?l.members.length:0)+"</td><td><span class=\"chip"+(on?" on":"")+"\" data-id=\""+l.id+"\" onclick=\"toggleLeaderWarehouse(this)\" style=\"cursor:pointer\" title=\"打开后该组长可看全部仓库（手机+电话卡），关掉只看本组\">"+(on?"🔓 开":"🔒 关")+"</span></td><td style=\"white-space:nowrap\"><button class=\"btn btn-sm btn-ghost\" onclick=\"showLeaderMembers('"+l.id+"','"+esc(l.name)+"')\">查看组员</button> <button class=\"btn btn-sm btn-green\" onclick=\"showAssignToLeader('"+l.id+"','"+esc(l.name)+"')\">＋ 添加组员</button> <button class=\"btn btn-sm btn-ghost\" onclick=\"showEditUser('"+l.id+"')\">编辑</button> <button class=\"btn btn-sm btn-danger\" onclick=\"delMember('"+l.id+"')\">删除</button></td></tr>";
   });
-  if(!h)h="<tr><td colspan=\"4\" class=\"empty\">暂无组长，点击右上角添加</td></tr>";
+  if(!h)h="<tr><td colspan=\"5\" class=\"empty\">暂无组长，点击右上角添加</td></tr>";
   document.getElementById("leaderTableBody").innerHTML=h;
+}
+// v13.56：切换组长看总仓库开关
+async function toggleLeaderWarehouse(el){
+  var id=el.getAttribute("data-id");
+  try{
+    var settData=await apiGet("/api/settings");
+    var wh=(settData.settings&&settData.settings.leader_see_all_warehouse)||[];
+    var on=wh.indexOf(id)>=0;
+    var next=on?wh.filter(function(x){return x!==id;}):wh.concat([id]);
+    await apiPost("/api/settings",{leader_see_all_warehouse:next});
+    toast(on?"已关闭该组长看总仓库":"已开启该组长看总仓库");
+    renderLeaderTable();
+  }catch(e){toast(e.message,"err");}
 }
 async function renderDirectMembers(){
   var data=await apiGet("/api/users");
