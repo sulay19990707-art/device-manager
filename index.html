@@ -715,6 +715,67 @@ function delSimFieldOption(tk,fieldId,val){
   f.options=f.options.filter(function(o){return o!==val;});
   sv();return[200,{ok:true}];
 }
+// ===== v13.59：通知任务（主管/组长发布，员工弹窗确认）=====
+// 本地时间字符串(YYYY-MM-DDTHH:MM)，与 datetime-local 同格式，避免 UTC 时区偏差
+function nowLocalStr16(){
+  var d=new Date();
+  function p(n){return (n<10?"0":"")+n;}
+  return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate())+"T"+p(d.getHours())+":"+p(d.getMinutes());
+}
+function getNotices(tk){
+  var u=verify(tk);if(!u)return[401,{error:"未登录"}];
+  var now=nowLocalStr16();
+  var list=(D.notices||[]).filter(function(n){
+    // 定时任务：到时间才可见
+    if(n.publish_at&&n.publish_at>now)return false;
+    // 范围：all=全部员工，leader:<id>=指定组长组，user:<id>=指定员工
+    if(n.target==="all")return true;
+    if(n.target.indexOf("leader:")===0){
+      var lid=n.target.slice(7);
+      if(u.role==="leader")return u.id===lid;
+      if(u.role==="member")return u.parent_id===lid;
+      return true; // 主管可见所有组
+    }
+    if(n.target.indexOf("user:")===0){
+      return n.target.slice(5)===u.id;
+    }
+    return true;
+  });
+  list=list.map(function(n){
+    return Object.assign({},n,{acked:(n.acked||[]).indexOf(u.id)>=0});
+  });
+  return[200,{notices:list}];
+}
+function postNotice(tk,b){
+  var u=verify(tk);if(!u)return[401,{error:"未登录"}];
+  if(u.role!=="supervisor"&&u.role!=="leader")return[403,{error:"只有主管/组长可发布通知"}];
+  if(!b.title||!String(b.title).trim())return[400,{error:"请填写通知标题"}];
+  // 组长只能发给自己组的员工
+  var target=b.target||"all";
+  if(u.role==="leader"&&target==="all")target="leader:"+u.id;
+  if(u.role==="leader"&&target.indexOf("leader:")===0&&target.slice(7)!==u.id)return[403,{error:"组长只能通知本组员工"}];
+  D.notices=(D.notices||[]).concat([{
+    id:uid(),title:String(b.title).trim(),content:b.content||"",qty:b.qty||"",
+    due_time:b.due_time||"",publish_at:b.publish_at||"",target:target,
+    created_by:u.id,created_by_name:u.name,created_at:nowStr(),acked:[]
+  }]);
+  sv();return[200,{ok:true}];
+}
+function ackNotice(tk,id){
+  var u=verify(tk);if(!u)return[401,{error:"未登录"}];
+  var n=(D.notices||[]).find(function(x){return x.id===id;});
+  if(!n)return[404,{error:"通知不存在"}];
+  if((n.acked||[]).indexOf(u.id)<0)n.acked=(n.acked||[]).concat([u.id]);
+  sv();return[200,{ok:true}];
+}
+function delNotice(tk,id){
+  var u=verify(tk);if(!u)return[401,{error:"未登录"}];
+  var n=(D.notices||[]).find(function(x){return x.id===id;});
+  if(!n)return[404,{error:"通知不存在"}];
+  if(u.role!=="supervisor"&&(u.role!=="leader"||n.created_by!==u.id))return[403,{error:"无权限"}];
+  D.notices=(D.notices||[]).filter(function(x){return x.id!==id;});
+  sv();return[200,{ok:true}];
+}
 function postAsset(tk,b){
   var u=verify(tk);if(!u)return[401,{error:"未登录"}];
   if(!b.data||!b.data.type)return[400,{error:"请选择设备类型"}];
@@ -1530,8 +1591,13 @@ if(path==="/api/sims/batch_take"&&method==="POST")return simBatchTake(tk,body);
 if(path==="/api/sims/checkin"&&method==="POST")return postCheckin(tk,body);
 if(path==="/api/sims/return_direct"&&method==="POST")return simReturnDirect(tk,body);
 if(path==="/api/sims/assign"&&method==="POST")return simAssign(tk,body);
-if(path==="/api/settings"&&method==="GET")return getSettings(tk);
-if(path==="/api/settings"&&method==="POST")return saveSettings(tk,body);
+  if(path==="/api/settings"&&method==="GET")return getSettings(tk);
+  if(path==="/api/settings"&&method==="POST")return saveSettings(tk,body);
+  // v13.59：通知任务
+  if(path==="/api/notices"&&method==="GET")return getNotices(tk);
+  if(path==="/api/notices"&&method==="POST")return postNotice(tk,body);
+  if(path==="/api/notices/ack"&&method==="POST")return ackNotice(tk,body&&body.id);
+  if(path==="/api/notices/del"&&method==="POST")return delNotice(tk,body&&body.id);
   if(path==="/api/sim_option"&&method==="POST")return postSimOption(tk,body);
   if(path==="/api/sim_fields"&&method==="POST")return postSimField(tk,body);
   if(path==="/api/sim_fields/move"&&method==="POST")return moveSimField(tk,body);
@@ -1633,6 +1699,12 @@ function showApp(){
   if(STATE.user.role==="supervisor")startWatch();
   // v13.53：每日提醒未填存放手机的电话卡（登录后当天提醒一次）
   setTimeout(dailySimBindRemind,1500);
+  // v13.59：未确认通知弹窗（屏幕中间大弹窗，点"收到"才消失）
+  setTimeout(checkPendingNotices,800);
+  if(STATE.user.role==="supervisor"||STATE.user.role==="leader"){
+    // 主管/组长也检查定时通知（到点提醒）
+    setInterval(checkPendingNotices,60000);
+  }
 }
 var watchTimer=null,lastPendingCount=-1;
 function startWatch(){
@@ -1669,6 +1741,7 @@ function renderSidebar(){
       {id:"uses",icon:"🔁",label:"领用记录"},
       {id:"repairs",icon:"🔧",label:"维修管理"},
       {id:"stats",icon:"📊",label:"数据统计"},
+      {id:"notices",icon:"📣",label:"通知任务"},
       {id:"options",icon:"⚙️",label:"选项管理"},
       {id:"members",icon:"👤",label:"账号管理"}
     ];
@@ -1683,6 +1756,7 @@ function renderSidebar(){
       {id:"uses",icon:"🔁",label:"领用记录"},
       {id:"repairs",icon:"🔧",label:"维修管理"},
       {id:"stats",icon:"📊",label:"数据统计"},
+      {id:"notices",icon:"📣",label:"通知任务"},
       {id:"options",icon:"⚙️",label:"选项管理"},
       {id:"members",icon:"👤",label:"员工账号"}
     ];
@@ -1751,7 +1825,7 @@ async function refreshBadges(){
   }catch(e){}
 }
 
-function navTo(page){CURRENT_PAGE=page;renderSidebar();if(page==="review")renderReview();else if(page==="assets")renderAssets();else if(page==="ship")renderShipManage();else if(page==="uses")renderUses();else if(page==="repairs")renderRepairs();else if(page==="stats")renderStats();else if(page==="options")renderOptions();else if(page==="warehouse")renderWarehouse();else if(page==="sims")renderSims();else if(page==="simwh")renderSimWarehouse();else if(page==="members")renderMembers();else if(page==="mydev")renderMyDev();else if(page==="mymain")renderMyMain();}
+function navTo(page){CURRENT_PAGE=page;renderSidebar();if(page==="review")renderReview();else if(page==="assets")renderAssets();else if(page==="ship")renderShipManage();else if(page==="uses")renderUses();else if(page==="repairs")renderRepairs();else if(page==="stats")renderStats();else if(page==="options")renderOptions();else if(page==="warehouse")renderWarehouse();else if(page==="sims")renderSims();else if(page==="simwh")renderSimWarehouse();else if(page==="members")renderMembers();else if(page==="notices")renderNotices();else if(page==="mydev")renderMyDev();else if(page==="mymain")renderMyMain();}
 // v13.49：统一实时刷新——按当前页面调用对应整页渲染（含筛选栏/统计卡），点击操作后无需切页或手动刷新
 // v13.57：修复搜索框被轮询清空——渲染前保存搜索词/筛选值，渲染后恢复并重跑列表过滤
 var __refreshBusy=false;
@@ -1767,7 +1841,7 @@ async function refreshCurrent(){
     });
   }catch(e){}
   try{
-    if(p==="review")await renderReview();else if(p==="assets")await renderAssets();else if(p==="ship")await renderShipManage();else if(p==="uses")await renderUses();else if(p==="repairs")await renderRepairs();else if(p==="stats")await renderStats();else if(p==="options")await renderOptions();else if(p==="warehouse")await renderWarehouse();else if(p==="sims")await renderSims();else if(p==="simwh")await renderSimWarehouse();else if(p==="members")await renderMembers();else if(p==="mydev")await renderMyDev();else if(p==="mymain")await renderMyMain();
+    if(p==="review")await renderReview();else if(p==="assets")await renderAssets();else if(p==="ship")await renderShipManage();else if(p==="uses")await renderUses();else if(p==="repairs")await renderRepairs();else if(p==="stats")await renderStats();else if(p==="options")await renderOptions();else if(p==="warehouse")await renderWarehouse();else if(p==="sims")await renderSims();else if(p==="simwh")await renderSimWarehouse();else if(p==="members")await renderMembers();else if(p==="notices")await renderNotices();else if(p==="mydev")await renderMyDev();else if(p==="mymain")await renderMyMain();
   }catch(e){}
   // 2. 恢复筛选值
   try{
@@ -1885,6 +1959,126 @@ function reqTypeTag(t){var v=REQ_TYPES[t]||[t,"tag-gray"];return "<span class=\"
 function reqStatusTag(s){var v=REQ_STATUS[s]||[s,"tag-gray"];return "<span class=\"tag "+v[1]+"\">"+v[0]+"</span>";}
 
 // ===== 主管：待审申请 =====
+// v13.59：通知任务（主管/组长发布，员工弹窗确认）
+async function checkPendingNotices(){
+  try{
+    if(!STATE.user)return;
+    // 弹窗已显示则不重复
+    if(document.getElementById("noticeMask")&&document.getElementById("noticeMask").style.display==="flex")return;
+    var data=await apiGet("/api/notices");
+    var list=data.notices||[];
+    var unacked=list.filter(function(n){return !n.acked;});
+    if(!unacked.length)return;
+    var n=unacked[0];
+    showNoticePopup(n);
+  }catch(e){}
+}
+function showNoticePopup(n){
+  var mask=document.getElementById("noticeMask");
+  if(!mask){
+    mask=document.createElement("div");
+    mask.id="noticeMask";
+    mask.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;display:flex;align-items:center;justify-content:center;";
+    document.body.appendChild(mask);
+  }
+  var due=n.due_time?"<div style=\"margin:10px 0 4px;font-size:15px;color:var(--faint)\">⏰ 时间："+esc(n.due_time)+"</div>":"";
+  var qty=n.qty?"<div style=\"margin:4px 0;font-size:15px;color:var(--faint)\">📦 数量："+esc(n.qty)+"</div>":"";
+  var content=n.content?"<div style=\"margin:12px 0;font-size:16px;color:#333;line-height:1.7\">"+esc(n.content).replace(/\n/g,"<br>")+"</div>":"";
+  mask.innerHTML="<div style=\"background:#fff;border-radius:18px;max-width:520px;width:92%;padding:30px 26px;box-shadow:0 20px 60px rgba(0,0,0,.35);text-align:center\">"
+    +"<div style=\"font-size:42px;margin-bottom:10px\">📣</div>"
+    +"<div style=\"font-size:22px;font-weight:800;color:#111;margin-bottom:8px\">"+esc(n.title)+"</div>"
+    +due+qty+content
+    +"<div style=\"font-size:13px;color:var(--faint);margin-top:14px\">发布人："+esc(n.created_by_name||"")+" · "+esc((n.created_at||"").slice(0,16))+"</div>"
+    +"<div style=\"margin-top:20px\"><button onclick=\"ackNoticeClick('"+n.id+"')\" style=\"background:#0a84ff;color:#fff;border:none;border-radius:12px;padding:13px 44px;font-size:17px;font-weight:700;cursor:pointer\">✅ 收到</button></div>"
+    +"</div>";
+  mask.style.display="flex";
+}
+async function ackNoticeClick(id){
+  try{
+    await apiPost("/api/notices/ack",{id:id});
+    var mask=document.getElementById("noticeMask");
+    if(mask)mask.style.display="none";
+    // 还有未读继续弹
+    setTimeout(checkPendingNotices,300);
+  }catch(e){toast(e.message,"err");}
+}
+async function renderNotices(){
+  var data=await apiGet("/api/notices");
+  var usersData=await apiGet("/api/users");
+  var list=data.notices||[];
+  var isMgr=(STATE.user.role==="supervisor"||STATE.user.role==="leader");
+  var h="<div class=\"page-title\">通知任务</div><div class=\"page-desc\">"+(isMgr?"发布通知任务给员工，员工登录后弹窗确认":"查看主管/组长发布的通知")+"</div>";
+  if(isMgr){
+    // 发布范围选项
+    var targetOpts="<option value=\"all\">全体员工</option>";
+    (usersData.users||[]).forEach(function(u){
+      if(u.role==="leader"){
+        targetOpts+="<option value=\"leader:"+u.id+"\">"+esc(u.name)+"组</option>";
+        (u.members||[]).forEach(function(m){targetOpts+="<option value=\"user:"+m.id+"\">"+esc(u.name)+"组 · "+esc(m.name)+"</option>";});
+      }else if(u.role==="member"&&STATE.user.role==="supervisor"){
+        targetOpts+="<option value=\"user:"+u.id+"\">直属 · "+esc(u.name)+"</option>";
+      }
+    });
+    // 组长只能发本组
+    if(STATE.user.role==="leader"){
+      targetOpts="<option value=\"all\">本组员工</option>";
+      (usersData.users||[]).forEach(function(u){
+        if(u.role==="leader"&&u.id===STATE.user.id){
+          (u.members||[]).forEach(function(m){targetOpts+="<option value=\"user:"+m.id+"\">本组 · "+esc(m.name)+"</option>";});
+        }
+      });
+    }
+    h+="<div class=\"card\"><div class=\"c-head\"><h3>发布通知</h3></div><div class=\"c-body\">"
+      +"<div class=\"field\"><label>标题</label><input id=\"nt_title\" placeholder=\"如：今日任务：每人注册10个账号\"></div>"
+      +"<div class=\"field\"><label>内容</label><textarea id=\"nt_content\" rows=\"3\" style=\"width:100%;border:1.5px solid var(--line);border-radius:9px;padding:10px;font-size:13px\" placeholder=\"通知内容…\"></textarea></div>"
+      +"<div style=\"display:flex;gap:12px;flex-wrap:wrap\">"
+      +"<div class=\"field\" style=\"flex:1;min-width:140px\"><label>时间</label><input id=\"nt_due\" placeholder=\"如：9月6日 18:00 前\"></div>"
+      +"<div class=\"field\" style=\"flex:1;min-width:140px\"><label>数量</label><input id=\"nt_qty\" placeholder=\"如：10个\"></div>"
+      +"<div class=\"field\" style=\"flex:1;min-width:160px\"><label>定时发布（留空立即发）</label><input id=\"nt_pub\" type=\"datetime-local\"></div>"
+      +"<div class=\"field\" style=\"flex:1;min-width:140px\"><label>发送范围</label><select id=\"nt_target\">"+targetOpts+"</select></div>"
+      +"</div>"
+      +"<div class=\"m-btns\"><button class=\"btn btn-primary\" onclick=\"postNoticeClick()\">📣 发布通知</button></div><div class=\"err\" id=\"nt_err\"></div>"
+      +"</div></div>";
+  }
+  // 通知列表
+  h+="<div class=\"card\"><div class=\"c-head\"><h3>通知列表</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th>标题</th><th>范围</th><th>时间/数量</th><th>发布人</th><th>发布时间</th><th>确认情况</th>"+(isMgr?"<th>操作</th>":"")+"</tr></thead><tbody>";
+  list.slice().sort(function(a,b){return b.created_at.localeCompare(a.created_at);}).forEach(function(n){
+    var scope=n.target==="all"?"全体":(n.target.indexOf("leader:")===0?(n.target.slice(7)==="all"?"本组":"指定组"):"指定人");
+    var ackedN=(n.acked||[]).length;
+    var confirmTd;
+    if(STATE.user.role==="member"){
+      confirmTd=n.acked?"<span class=\"tag tag-green\">已确认</span>":"<span class=\"tag tag-orange\">未确认</span>";
+    }else{
+      confirmTd="已读 "+ackedN+" 人"+(n.acked&&n.acked.length?" · "+n.acked.map(function(uid){var uu=(usersData.users||[]).find(function(x){return x.id===uid;});return uu?uu.name:"";}).filter(Boolean).join("、"):"");
+    }
+    h+="<tr><td><b>"+esc(n.title)+"</b>"+(n.content?"<div style=\"font-size:12px;color:var(--faint)\">"+esc(n.content).slice(0,60)+"</div>":"")+"</td><td>"+scope+"</td><td>"+(n.due_time?esc(n.due_time):"—")+(n.qty?" · "+esc(n.qty):"")+"</td><td>"+esc(n.created_by_name||"")+"</td><td>"+esc((n.created_at||"").slice(0,16))+"</td><td>"+confirmTd+"</td>"+(isMgr?"<td><button class=\"btn btn-sm btn-danger\" onclick=\"delNoticeClick('"+n.id+"')\">删除</button></td>":"")+"</tr>";
+  });
+  if(!list.length)h+="<tr><td colspan=\""+(isMgr?"7":"6")+"\" class=\"empty\">暂无通知</td></tr>";
+  h+="</tbody></table></div></div>";
+  document.getElementById("content").innerHTML=h;
+}
+async function postNoticeClick(){
+  var title=document.getElementById("nt_title").value.trim();
+  if(!title){document.getElementById("nt_err").textContent="请填写标题";return;}
+  try{
+    var pub=document.getElementById("nt_pub").value;
+    // datetime-local 值格式(2026-09-06T18:00) 与后端比较格式(ISO slice(0,16))一致，直接存
+    await apiPost("/api/notices",{
+      title:title,
+      content:document.getElementById("nt_content").value,
+      qty:document.getElementById("nt_qty").value.trim(),
+      due_time:document.getElementById("nt_due").value.trim(),
+      publish_at:pub||"",
+      target:document.getElementById("nt_target").value
+    });
+    toast("通知已发布"+(pub?"（定时）":""));
+    renderNotices();
+  }catch(e){document.getElementById("nt_err").textContent=e.message;}
+}
+async function delNoticeClick(id){
+  if(!confirm("删除该通知？"))return;
+  try{await apiPost("/api/notices/del",{id:id});toast("已删除");renderNotices();}catch(e){toast(e.message,"err");}
+}
 async function renderReview(){
   var data=await apiGet("/api/stats");
   var h="<div class=\"page-title\">待审申请</div><div class=\"page-desc\">审核员工提交的领用 / 报修 / 退还 / 删除申请</div>";
@@ -3638,7 +3832,18 @@ async function renderSimTable(){
     }else{
       bindHtml=bindInfo;
     }
-    h+="<tr><td><b>"+esc(d.sim_no||"—")+"</b>"+(d.box_no?(d.box_slot?" <span class=\"tag tag-cyan\" style=\"font-size:11px;padding:2px 8px\">"+esc(d.box_no)+"号盒 · 编号"+esc(d.box_slot)+"</span>":" <span class=\"tag tag-cyan\" style=\"font-size:11px;padding:2px 8px\">"+esc(d.box_no)+"号盒</span>"):"")+"</td><td>"+esc(d.sim_type||"—")+"</td>"+extraTds+"<td>"+bindHtml+"</td><td>"+useTd+retTag+simCheckinTag(s)+simBindTag(s)+"</td><td class=\"num\">"+esc(s.created)+"</td><td style=\"white-space:nowrap\">";
+    // v13.59：注册记录显示在手机号下方（多条历史：注册/注销+日期）
+    var recShow="";
+    if(d.reg_records&&d.reg_records.length){
+      recShow="<div style=\"margin-top:3px;font-size:11px;line-height:1.5;color:var(--sub)\">";
+      d.reg_records.slice().reverse().slice(0,4).forEach(function(r){
+        var tag=r.type==="注销"?"<span style=\"color:var(--orange)\">注销</span>":"<span style=\"color:var(--green,#34c759)\">注册</span>";
+        recShow+="<div>· "+tag+" "+(r.date?esc(r.date):"")+(r.note?" <span style=\"color:var(--faint)\">"+esc(r.note)+"</span>":"")+"</div>";
+      });
+      if(d.reg_records.length>4)recShow+="<div style=\"color:var(--faint)\">+ "+(d.reg_records.length-4)+" 条更早</div>";
+      recShow+="</div>";
+    }
+    h+="<tr><td><b>"+esc(d.sim_no||"—")+"</b>"+(d.box_no?(d.box_slot?" <span class=\"tag tag-cyan\" style=\"font-size:11px;padding:2px 8px\">"+esc(d.box_no)+"号盒 · 编号"+esc(d.box_slot)+"</span>":" <span class=\"tag tag-cyan\" style=\"font-size:11px;padding:2px 8px\">"+esc(d.box_no)+"号盒</span>"):"")+recShow+"</td><td>"+esc(d.sim_type||"—")+"</td>"+extraTds+"<td>"+bindHtml+"</td><td>"+useTd+retTag+simCheckinTag(s)+simBindTag(s)+"</td><td class=\"num\">"+esc(s.created)+"</td><td style=\"white-space:nowrap\">";
     // v13.51：打印 50×30mm 标签（手机号+编号），贴20格收纳册用
     h+="<button class=\"btn btn-sm btn-blue\" onclick=\"printSimLabels(['"+s.id+"'],'single')\">🖨 标签</button> ";
     // v13.6：员工可编辑/删除自己登记的电话卡（跟登记手机一样的原理）
@@ -3959,12 +4164,68 @@ async function showEditSim(id){
   // v13.8：绑定设备修改受权限开关控制（开关关→禁用下拉）
   // v13.43：绑定下拉禁用判断加总开关+主管组长不受限（否则员工开总开关也清空不了绑定设备）
   var bindLock=!allowBind&&!allowAllS&&!isMgrS;
+  // v13.59：注册记录（循环注册：注册→注销→再注册，多条历史）
+  var recs=d.reg_records||[];
+  var recHtml="<div class=\"field\"><label>注册记录（循环注册历史，可多条）</label><div id=\"reg_rec_list\">";
+  if(!recs.length)recHtml+="<div class=\"empty\" style=\"font-size:12px\">暂无记录，点击下方添加</div>";
+  recs.forEach(function(r,i){
+    recHtml+="<div style=\"display:flex;gap:8px;align-items:center;margin-bottom:6px\">"
+      +"<input type=\"date\" value=\""+esc(r.date||"")+"\" style=\"flex:1.2;min-width:130px;padding:6px 8px;border:1.5px solid var(--line);border-radius:8px;font-size:13px\" onchange=\"regRecSet("+i+",'date',this.value)\">"
+      +"<select style=\"flex:1;min-width:90px;padding:6px 8px;border:1.5px solid var(--line);border-radius:8px;font-size:13px\" onchange=\"regRecSet("+i+",'type',this.value)\"><option value=\"注册\""+(r.type==="注册"?" selected":"")+">注册</option><option value=\"注销\""+(r.type==="注销"?" selected":"")+">注销</option></select>"
+      +"<input value=\""+esc(r.note||"")+"\" placeholder=\"备注(可选)\" style=\"flex:2;min-width:120px;padding:6px 8px;border:1.5px solid var(--line);border-radius:8px;font-size:13px\" oninput=\"regRecSet("+i+",'note',this.value)\">"
+      +"<button class=\"btn btn-sm btn-danger\" onclick=\"regRecDel("+i+")\">✕</button></div>";
+  });
+  recHtml+="</div><div style=\"display:flex;gap:8px;margin-top:4px\">"
+    +"<button class=\"btn btn-sm btn-green\" onclick=\"regRecAdd()\">＋ 添加记录</button>"
+    +"<button class=\"btn btn-sm btn-ghost\" onclick=\"regRecQuick('注册')\">快捷：注册今天</button>"
+    +"<button class=\"btn btn-sm btn-ghost\" onclick=\"regRecQuick('注销')\">快捷：注销今天</button>"
+    +"</div></div>";
   showModal("<h3>编辑电话卡</h3>"
     +"<div class=\"field\"><label>卡号<span class=\"req\"> *</span></label><input id=\"s_no\" value=\""+esc(d.sim_no||"")+"\" oninput=\"previewSimType()\"></div>"
     +"<div class=\"field\"><label>运营商（自动识别）</label><div id=\"s_type_preview\" style=\"padding:8px 0;color:var(--accent);font-weight:600\">"+esc(detectOperator(d.sim_no||""))+"</div></div>"
     +simFieldHtml(simfields,d)
+    +recHtml
     +"<div class=\"field\"><label>绑定设备"+(bindLock?"<span style=\"color:var(--orange);font-size:11px\">（需在选项管理开启权限）</span>":"")+"</label>"+assetSelectHtml(assets.assets,s.asset_id,bindLock)+"</div>"
     +"<div class=\"m-btns\"><button class=\"btn btn-ghost\" onclick=\"closeModal()\">取消</button><button class=\"btn btn-primary\" onclick=\"saveEditSim('"+id+"')\">保存修改</button></div><div class=\"err\" id=\"s_err\"></div>");
+  // 初始化编辑用注册记录缓存
+  window.__regRecs=recs.map(function(r){return {date:r.date||"",type:r.type||"注册",note:r.note||""};});
+}
+// v13.59：注册记录编辑辅助
+function regRecAdd(){
+  if(!window.__regRecs)window.__regRecs=[];
+  window.__regRecs.push({date:"",type:"注册",note:""});
+  regRecRender();
+}
+function regRecQuick(t){
+  var today=new Date();var p=function(n){return (n<10?"0":"")+n;};
+  var ds=today.getFullYear()+"-"+p(today.getMonth()+1)+"-"+p(today.getDate());
+  if(!window.__regRecs)window.__regRecs=[];
+  window.__regRecs.push({date:ds,type:t,note:""});
+  regRecRender();
+}
+function regRecDel(i){
+  if(!window.__regRecs)return;
+  window.__regRecs.splice(i,1);
+  regRecRender();
+}
+function regRecSet(i,k,v){
+  if(!window.__regRecs)window.__regRecs=[];
+  if(!window.__regRecs[i])window.__regRecs[i]={date:"",type:"注册",note:""};
+  window.__regRecs[i][k]=v;
+}
+function regRecRender(){
+  var box=document.getElementById("reg_rec_list");if(!box)return;
+  var recs=window.__regRecs||[];
+  var h="";
+  if(!recs.length)h="<div class=\"empty\" style=\"font-size:12px\">暂无记录，点击下方添加</div>";
+  recs.forEach(function(r,i){
+    h+="<div style=\"display:flex;gap:8px;align-items:center;margin-bottom:6px\">"
+      +"<input type=\"date\" value=\""+esc(r.date||"")+"\" style=\"flex:1.2;min-width:130px;padding:6px 8px;border:1.5px solid var(--line);border-radius:8px;font-size:13px\" onchange=\"regRecSet("+i+",'date',this.value)\">"
+      +"<select style=\"flex:1;min-width:90px;padding:6px 8px;border:1.5px solid var(--line);border-radius:8px;font-size:13px\" onchange=\"regRecSet("+i+",'type',this.value)\"><option value=\"注册\""+(r.type==="注册"?" selected":"")+">注册</option><option value=\"注销\""+(r.type==="注销"?" selected":"")+">注销</option></select>"
+      +"<input value=\""+esc(r.note||"")+"\" placeholder=\"备注(可选)\" style=\"flex:2;min-width:120px;padding:6px 8px;border:1.5px solid var(--line);border-radius:8px;font-size:13px\" oninput=\"regRecSet("+i+",'note',this.value)\">"
+      +"<button class=\"btn btn-sm btn-danger\" onclick=\"regRecDel("+i+")\">✕</button></div>";
+  });
+  box.innerHTML=h;
 }
 async function saveEditSim(id){
   var no=document.getElementById("s_no").value.trim();
@@ -3972,6 +4233,10 @@ async function saveEditSim(id){
   var fd=collectSimForm(window.__simFields||[]);
   fd.sim_no=no;
   fd.sim_type=detectOperator(no); // v13.50：运营商按卡号自动识别
+  // v13.59：注册记录（多值历史）
+  var recs=(window.__regRecs||[]).filter(function(r){return r.date;});
+  if(recs.length)fd.reg_records=recs;
+  else delete fd.reg_records;
   var assetId=document.getElementById("s_asset").value;
   try{
     await apiPost("/api/sims/update",{id:id,data:fd,asset_id:assetId});
