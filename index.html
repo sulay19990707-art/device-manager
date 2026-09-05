@@ -328,7 +328,11 @@ async function pullCloud(force){
       ensureSimData();
       svLocal();
       // v13.49：云端同步后刷新当前可见页面（无需切页/刷新即显示最新数据）
-      try{refreshCurrent();}catch(e){}
+      // v13.57：输入中不刷新——避免搜索框打字时整页重渲染导致焦点丢失/内容消失
+      var __ae=document.activeElement;
+      if(!(__ae&&(__ae.tagName==="INPUT"||__ae.tagName==="TEXTAREA"||__ae.tagName==="SELECT"))){
+        try{refreshCurrent();}catch(e){}
+      }
     }else{
       pushCloud();
     }
@@ -341,6 +345,17 @@ function ensureSimData(){
     D.simfields.push({id:"box_no",label:"盒号",type:"input",placeholder:"如 3（自动分配可改）",required:false});
   if(!D.simfields.some(function(f){return f.id==="box_slot";}))
     D.simfields.push({id:"box_slot",label:"编号",type:"input",placeholder:"如：手机背面编号",required:false});
+  // v13.58：电话卡循环注册字段（注册→注销→再注册），主管可在选项管理增删
+  if(!D.simfields.some(function(f){return f.id==="reg_status";}))
+    D.simfields.push({id:"reg_status",label:"注册状态",type:"select",options:["待注册","已注册","已注销","停用"],required:false});
+  if(!D.simfields.some(function(f){return f.id==="reg_platform";}))
+    D.simfields.push({id:"reg_platform",label:"注册平台",type:"select",options:["抖音","快手","小红书","其他"],required:false});
+  if(!D.simfields.some(function(f){return f.id==="reg_account";}))
+    D.simfields.push({id:"reg_account",label:"注册账号",type:"input",placeholder:"如：抖音账号昵称/ID",required:false});
+  if(!D.simfields.some(function(f){return f.id==="reg_time";}))
+    D.simfields.push({id:"reg_time",label:"注册时间",type:"input",placeholder:"如：2026-09-01",required:false});
+  if(!D.simfields.some(function(f){return f.id==="unreg_time";}))
+    D.simfields.push({id:"unreg_time",label:"注销时间",type:"input",placeholder:"如：2026-08-30",required:false});
   // v13.36：旧"格位"字段改名为"编号"
   var oldSlot=D.simfields.find(function(f){return f.id==="box_slot"&&f.label==="格位";});
   if(oldSlot){oldSlot.label="编号";oldSlot.placeholder="如：手机背面编号";}
@@ -548,7 +563,7 @@ function delReturnOpt(tk,v){
 }
 function getSettings(tk){
   var u=verify(tk);if(!u)return[401,{error:"未登录"}];
-  return[200,{settings:D.settings||{allow_edit_phone:false,allow_edit_sim_bind:false,checkin_enabled:false,checkin_freq_days:3,checkin_msg:"请确认您的电话卡还在手上，丢失请立即上报！",allow_edit_sim_box:false,allow_edit_all_sim:false,leader_see_all_warehouse:[]}}];
+  return[200,{settings:D.settings||{allow_edit_phone:false,allow_edit_sim_bind:false,checkin_enabled:false,checkin_freq_days:3,checkin_msg:"请确认您的电话卡还在手上，丢失请立即上报！",allow_edit_sim_box:false,allow_edit_all_sim:false,leader_see_all_warehouse:[],auto_approve:false}}];
 }
 function saveSettings(tk,b){
   var u=verify(tk);if(!u)return[401,{error:"未登录"}];
@@ -564,6 +579,8 @@ function saveSettings(tk,b){
   if(typeof b.allow_edit_all_sim==="boolean")D.settings.allow_edit_all_sim=b.allow_edit_all_sim;
   // v13.56：组长可看总仓库开关（数组存组长id）
   if(Array.isArray(b.leader_see_all_warehouse))D.settings.leader_see_all_warehouse=b.leader_see_all_warehouse;
+  // v13.58：自动通过审核开关（主管/组长打开后，员工申请提交即自动通过）
+  if(typeof b.auto_approve==="boolean")D.settings.auto_approve=b.auto_approve;
   sv();return[200,{ok:true,settings:D.settings}];
 }
 function getSims(tk){
@@ -747,6 +764,11 @@ function postRequest(tk,b){
     }
     if(D.requests.find(function(x){return x.type===type&&x.sim_id===s.id&&x.user_id===u.id&&x.status==="pending";}))return[400,{error:"已有待审核的同类型申请"}];
     D.requests.push({id:uid(),type:type,sim_id:s.id,asset_id:"",asset_name:(s.data.sim_no||"电话卡"),user_id:u.id,user_name:u.name,status:"pending",created:nowStr(),desc:b.desc||"",return_reason:b.return_reason||"",return_note:b.return_note||"",to_user_id:b.to_user_id||"",to_user_name:(type==="sim_transfer"?(D.users.find(function(x){return x.id===b.to_user_id;})||{}).name||"":"")});
+    // v13.58：自动通过审核（开关打开时员工申请提交即通过）
+    if(u.role==="member"&&D.settings&&D.settings.auto_approve){
+      var rq=D.requests[D.requests.length-1];
+      executeApprove(rq,"自动审核");
+    }
     sv();return[200,{ok:true}];
   }
   var a=D.assets.find(function(x){return x.id===b.asset_id;});
@@ -774,15 +796,15 @@ function postRequest(tk,b){
   // 重复待审检查
   if(D.requests.find(function(x){return x.type===type&&x.asset_id===a.id&&x.user_id===u.id&&x.status==="pending";}))return[400,{error:"已有待审核的同类型申请"}];
   D.requests.push({id:uid(),type:type,asset_id:a.id,asset_name:assetName(a),user_id:u.id,user_name:u.name,desc:b.desc||"",reason:b.reason||"",note:"",return_reason:b.return_reason||"",return_note:b.return_note||"",to_where:b.to_where||"",ship_reason:b.ship_reason||"",tracking:b.tracking||"",status:"pending",created:nowStr(),handled_by:"",handled_at:"",field:b.field||"",new_value:b.new_value||""});
+  // v13.58：自动通过审核（开关打开时员工申请提交即通过）
+  if(u.role==="member"&&D.settings&&D.settings.auto_approve){
+    var rq=D.requests[D.requests.length-1];
+    executeApprove(rq,"自动审核");
+  }
   sv();return[200,{ok:true}];
 }
-function approveRequest(tk,id,b){
-  var u=verify(tk);if(!u)return[401,{error:"未登录"}];
-  if(u.role!=="supervisor"&&u.role!=="leader")return[403,{error:"无权限"}];
-  var r=D.requests.find(function(x){return x.id===id;});
-  if(!r)return[404,{error:"申请不存在"}];
-  if(u.role==="leader"&&!inScope(u,r.user_id))return[403,{error:"只能审核自己组的申请"}];
-  if(r.status!=="pending")return[400,{error:"该申请已处理"}];
+// v13.58：自动通过审核核心逻辑（approveRequest 与自动审核共用），operatorName=审核人（自动=“自动审核”）
+function executeApprove(r,operatorName){
   // v13.7：电话卡领用/退回审核；v13.9：转卡审核
   if(r.type==="sim_take"||r.type==="sim_return"||r.type==="sim_transfer"){
     var s=r.sim_id?(D.simcards||[]).find(function(x){return x.id===r.sim_id;}):null;
@@ -803,7 +825,7 @@ function approveRequest(tk,id,b){
       if(!toU)return[400,{error:"接收员工不存在"}];
       s.user_id=toU.id;s.user_name=toU.name;
     }
-    r.status="approved";r.handled_by=u.name;r.handled_at=nowStr();r.note=b&&b.note?b.note:"";
+    r.status="approved";r.handled_by=operatorName;r.handled_at=nowStr();
     sv();return[200,{ok:true}];
   }
   var a=D.assets.find(function(x){return x.id===r.asset_id;});
@@ -817,7 +839,7 @@ function approveRequest(tk,id,b){
       // v13.22：寄出时间=员工点击寄出（提交申请）的时间，不是审核时间
       ship_time:r.created||nowStr(),return_time:"",return_by:"",note:r.note||"",seen:false
     }]);
-    r.status="approved";r.handled_by=u.name;r.handled_at=nowStr();
+    r.status="approved";r.handled_by=operatorName;r.handled_at=nowStr();
     sv();return[200,{ok:true}];
   }
   if(r.type==="take"){
@@ -847,13 +869,24 @@ function approveRequest(tk,id,b){
     a.data[r.field]=r.new_value;
   }
   // v13.22：操作日志
-  if(a&&r.type==="take")addLog(a.id,"领用","审核通过领用申请",u.name);
-  else if(a&&r.type==="return")addLog(a.id,"归还","审核通过退还申请"+(r.return_reason?"（"+r.return_reason+"）":""),u.name);
-  else if(a&&r.type==="repair")addLog(a.id,"报修","审核通过报修："+r.desc,u.name);
-  else if(a&&r.type==="delete")addLog(a.id,"删除","审核通过删除申请"+(r.reason?"（"+r.reason+"）":""),u.name);
-  else if(a&&r.type==="edit")addLog(a.id,"修改","审核通过修改"+r.field+"→"+r.new_value,u.name);
-  r.status="approved";r.handled_by=u.name;r.handled_at=nowStr();r.note=b&&b.note?b.note:"";
+  if(a&&r.type==="take")addLog(a.id,"领用","审核通过领用申请",operatorName);
+  else if(a&&r.type==="return")addLog(a.id,"归还","审核通过退还申请"+(r.return_reason?"（"+r.return_reason+"）":""),operatorName);
+  else if(a&&r.type==="repair")addLog(a.id,"报修","审核通过报修："+r.desc,operatorName);
+  else if(a&&r.type==="delete")addLog(a.id,"删除","审核通过删除申请"+(r.reason?"（"+r.reason+"）":""),operatorName);
+  else if(a&&r.type==="edit")addLog(a.id,"修改","审核通过修改"+r.field+"→"+r.new_value,operatorName);
+  r.status="approved";r.handled_by=operatorName;r.handled_at=nowStr();
   sv();return[200,{ok:true}];
+}
+function approveRequest(tk,id,b){
+  var u=verify(tk);if(!u)return[401,{error:"未登录"}];
+  if(u.role!=="supervisor"&&u.role!=="leader")return[403,{error:"无权限"}];
+  var r=D.requests.find(function(x){return x.id===id;});
+  if(!r)return[404,{error:"申请不存在"}];
+  if(u.role==="leader"&&!inScope(u,r.user_id))return[403,{error:"只能审核自己组的申请"}];
+  if(r.status!=="pending")return[400,{error:"该申请已处理"}];
+  var res=executeApprove(r,u.name);
+  if(res[0]<400&&b&&b.note)r.note=b.note;
+  return res;
 }
 function actionReturnAsset(tk,b){
   var u=verify(tk);if(!u)return[401,{error:"未登录"}];
@@ -1720,7 +1753,44 @@ async function refreshBadges(){
 
 function navTo(page){CURRENT_PAGE=page;renderSidebar();if(page==="review")renderReview();else if(page==="assets")renderAssets();else if(page==="ship")renderShipManage();else if(page==="uses")renderUses();else if(page==="repairs")renderRepairs();else if(page==="stats")renderStats();else if(page==="options")renderOptions();else if(page==="warehouse")renderWarehouse();else if(page==="sims")renderSims();else if(page==="simwh")renderSimWarehouse();else if(page==="members")renderMembers();else if(page==="mydev")renderMyDev();else if(page==="mymain")renderMyMain();}
 // v13.49：统一实时刷新——按当前页面调用对应整页渲染（含筛选栏/统计卡），点击操作后无需切页或手动刷新
-function refreshCurrent(){var p=CURRENT_PAGE;if(p==="review")renderReview();else if(p==="assets")renderAssets();else if(p==="ship")renderShipManage();else if(p==="uses")renderUses();else if(p==="repairs")renderRepairs();else if(p==="stats")renderStats();else if(p==="options")renderOptions();else if(p==="warehouse")renderWarehouse();else if(p==="sims")renderSims();else if(p==="simwh")renderSimWarehouse();else if(p==="members")renderMembers();else if(p==="mydev")renderMyDev();else if(p==="mymain")renderMyMain();}
+// v13.57：修复搜索框被轮询清空——渲染前保存搜索词/筛选值，渲染后恢复并重跑列表过滤
+var __refreshBusy=false;
+async function refreshCurrent(){
+  var p=CURRENT_PAGE;
+  if(__refreshBusy)return;
+  __refreshBusy=true;
+  // 1. 保存当前筛选输入（搜索框/下拉）
+  var saved={};
+  try{
+    document.querySelectorAll("#content input[oninput],#content select[onchange]").forEach(function(el){
+      if(el.id)saved[el.id]=el.value;
+    });
+  }catch(e){}
+  try{
+    if(p==="review")await renderReview();else if(p==="assets")await renderAssets();else if(p==="ship")await renderShipManage();else if(p==="uses")await renderUses();else if(p==="repairs")await renderRepairs();else if(p==="stats")await renderStats();else if(p==="options")await renderOptions();else if(p==="warehouse")await renderWarehouse();else if(p==="sims")await renderSims();else if(p==="simwh")await renderSimWarehouse();else if(p==="members")await renderMembers();else if(p==="mydev")await renderMyDev();else if(p==="mymain")await renderMyMain();
+  }catch(e){}
+  // 2. 恢复筛选值
+  try{
+    Object.keys(saved).forEach(function(id){
+      var el=document.getElementById(id);
+      if(el)el.value=saved[id];
+    });
+  }catch(e){}
+  // 3. 重跑列表渲染让筛选生效（避免恢复值后列表显示全量）
+  try{
+    if(p==="review")renderReviewList();
+    else if(p==="assets")renderAssetTable();
+    else if(p==="ship"){renderShipActive();renderShTable();}
+    else if(p==="uses")renderUseTable();
+    else if(p==="repairs")renderRepairTable();
+    else if(p==="warehouse")renderWarehouseTable();
+    else if(p==="sims")renderSimTable();
+    else if(p==="simwh")renderSimWhTable();
+    else if(p==="members")renderMemberTable();
+    else if(p==="mydev")renderMyDevList();
+  }catch(e){}
+  __refreshBusy=false;
+}
 
 // ===== 标签 =====
 // v13.11：外寄等待时长（寄出时间 → 当前/寄回时间，单位天）
@@ -1819,6 +1889,12 @@ async function renderReview(){
   var data=await apiGet("/api/stats");
   var h="<div class=\"page-title\">待审申请</div><div class=\"page-desc\">审核员工提交的领用 / 报修 / 退还 / 删除申请</div>";
   h+="<div class=\"kpi-row\">"+kpiCard("待审核","#ff9500",data.stats.pendingReqs)+"</div>";
+  // v13.58：自动通过审核开关（打开后员工申请提交即自动通过，无需手动同意）
+  try{
+    var settData=await apiGet("/api/settings");
+    var aa=settData.settings&&settData.settings.auto_approve;
+    h+="<div class=\"filter-bar\"><span style=\"font-size:13px;line-height:30px\">⚡ 自动通过审核：</span><span class=\"chip"+(aa?" on":"")+"\" onclick=\"toggleAutoApprove(this)\" style=\"cursor:pointer\">"+(aa?"✅ 已开启（提交即通过）":"关闭（需手动审核）")+"</span><span style=\"font-size:12px;color:var(--faint);margin-left:8px\">开启后员工提交申请自动通过，不用逐条同意</span></div>";
+  }catch(e){}
   // v13.8：搜索 + 分类快捷筛选；v13.18：按员工快捷分类
   h+="<div class=\"filter-bar\"><input id=\"rvSearch\" placeholder=\"搜索申请人/设备/卡号\" oninput=\"renderReviewList()\" style=\"flex:2\"></div>";
   h+="<div class=\"filter-bar\" style=\"flex-wrap:wrap\" id=\"rvFilterBar\">加载分类…</div>";
@@ -1832,6 +1908,16 @@ async function renderReview(){
   renderReviewUserBar();
   renderReviewDoneBar();
   renderReviewList();
+}
+// v13.58：切换自动通过审核开关
+async function toggleAutoApprove(el){
+  try{
+    var settData=await apiGet("/api/settings");
+    var aa=settData.settings&&settData.settings.auto_approve;
+    await apiPost("/api/settings",{auto_approve:!aa});
+    toast(!aa?"已开启自动通过审核：员工申请提交即自动通过":"已关闭自动通过审核");
+    renderReview();
+  }catch(e){toast(e.message,"err");}
 }
 // v13.20：已处理记录快捷分类（类型 + 员工，独立于待处理）
 async function renderReviewDoneBar(){
