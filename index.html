@@ -2322,7 +2322,7 @@ async function inlineEdit(assetId, fieldId, type, td){
       });
       html="<div class=\"chip-row\" style=\"white-space:nowrap\">"+chips+"</div>";
     }else{
-      html="<input value=\""+esc(cur)+"\" onclick=\"event.stopPropagation()\" style=\"width:140px;box-sizing:border-box;padding:4px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:13px\" onkeydown=\"if(event.key==='Enter')inlineSaveInput('"+assetId+"','"+fieldId+"',this.value)\" onblur=\"renderAssetTable()\">";
+      html="<input value=\""+esc(cur)+"\" onclick=\"event.stopPropagation()\" style=\"width:140px;box-sizing:border-box;padding:4px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:13px\" onkeydown=\"if(event.key==='Enter')inlineSaveInput('"+assetId+"','"+fieldId+"',this.value)\" onblur=\"inlineBlurSave('"+assetId+"','"+fieldId+"',this)\">";
     }
     td.innerHTML=html;
     var inp=td.querySelector("input");if(inp)inp.focus();
@@ -2348,6 +2348,20 @@ async function togglePlatform(assetId, plat){
   }catch(e){toast(e.message,"err");}
 }
 async function inlineSaveInput(assetId, fieldId, value){await doInlineSave(assetId,fieldId,value);}
+// v13.58：设备字段失焦自动保存——点别处即保存（避免输入内容丢失）
+async function inlineBlurSave(assetId, fieldId, inp){
+  if(!inp)return;
+  var td=inp.parentNode;
+  var val=inp.value;
+  var hasVal=String(val||"").trim()!=="";
+  try{
+    if(hasVal)await doInlineSave(assetId,fieldId,val);
+    td.innerHTML=hasVal?esc(val):"<span style=\"color:var(--faint)\">—</span>";
+  }catch(e){
+    toast(e.message,"err");
+    td.innerHTML=hasVal?esc(val):"<span style=\"color:var(--faint)\">—</span>";
+  }
+}
 async function doInlineSave(assetId, fieldId, value){
   try{
     var me=STATE.user;
@@ -3732,7 +3746,7 @@ async function simInlineEdit(simId, fieldId, type, td){
       });
       html="<div class=\"chip-row\" style=\"white-space:nowrap\">"+chips+"</div>";
     }else{
-      html="<input value=\""+esc(cur)+"\" onclick=\"event.stopPropagation()\" style=\"width:140px;box-sizing:border-box;padding:4px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:13px\" onkeydown=\"if(event.key==='Enter')simInlineSave('"+simId+"','"+fieldId+"',this.value)\" onblur=\"renderSimTable()\">";
+      html="<input value=\""+esc(cur)+"\" onclick=\"event.stopPropagation()\" style=\"width:140px;box-sizing:border-box;padding:4px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:13px\" onkeydown=\"if(event.key==='Enter')simInlineSave('"+simId+"','"+fieldId+"',this.value)\" onblur=\"simInlineBlur('"+simId+"','"+fieldId+"',this)\">";
     }
     td.innerHTML=html;
     var inp=td.querySelector("input");
@@ -3746,6 +3760,25 @@ async function simInlineSave(simId, fieldId, value){
     toast("已保存");
   }catch(e){toast(e.message,"err");}
   refreshCurrent();
+}
+// v13.58：电话卡字段失焦自动保存——点别处即保存（不重建整表，避免打断继续编辑其他格子）
+async function simInlineBlur(simId, fieldId, inp){
+  if(!inp)return;
+  var td=inp.parentNode;
+  var val=inp.value;
+  var hasVal=String(val||"").trim()!=="";
+  try{
+    if(hasVal){
+      var body={id:simId,data:{}};body.data[fieldId]=val;
+      await apiPost("/api/sims/update",body);
+      toast("已保存");
+    }
+    // 只更新当前格子，不重建整表
+    td.innerHTML=hasVal?esc(val):"<span style=\"color:var(--faint)\">—</span>";
+  }catch(e){
+    toast(e.message,"err");
+    td.innerHTML=hasVal?esc(val):"<span style=\"color:var(--faint)\">—</span>";
+  }
 }
 // v13.16：电话卡绑定设备——单击输入手机编号即绑定（员工可绑自己登记/领用的卡，主管/组长可绑所有）
 async function simBindEdit(simId, el){
