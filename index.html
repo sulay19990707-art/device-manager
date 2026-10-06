@@ -610,7 +610,9 @@ function postSim(tk,b){
   var d={};for(var k in b.data)d[k]=b.data[k];
   if((D.simcards||[]).find(function(s){return s.data&&s.data.sim_no===d.sim_no;}))return[400,{error:"卡号已存在，不能重复"}];
   // v13.7：登记"在用"时登记人即使用人（跟登记手机一样的原理）
-  var rec={id:uid(),data:d,created:nowStr(),created_by:u.id,created_by_name:u.name,asset_id:b.asset_id||""};
+  // v13.60：登记时间可选（不填=当前时间；支持补录历史卡/自选登记时间）
+  var createdIn=b.created?String(b.created).trim().replace("T"," "):"";
+  var rec={id:uid(),data:d,created:createdIn||nowStr(),created_by:u.id,created_by_name:u.name,asset_id:b.asset_id||""};
   if(d.sim_status==="在用"){rec.user_id=u.id;rec.user_name=u.name;}
   (D.simcards=D.simcards||[]).push(rec);
   sv();return[200,{ok:true}];
@@ -634,6 +636,11 @@ function updateSim(tk,b){
   if(b.asset_id!==undefined&&u.role!=="supervisor"&&u.role!=="leader"&&!allowAll&&(!D.settings||!D.settings.allow_edit_sim_bind))return[400,{error:"绑定设备修改已锁定，需主管在选项管理开启权限"}];
   if(b.asset_id!==undefined)s.asset_id=b.asset_id;
   if(b.asset_id){var a=D.assets.find(function(x){return x.id===b.asset_id;});if(!a)return[400,{error:"手机不存在"}];}
+  // v13.60：登记时间可改（主管/组长，或卡的登记人本人）
+  if(b.created!==undefined&&String(b.created).trim()){
+    if(u.role==="member"&&s.created_by!==u.id)return[403,{error:"只能修改自己登记的卡的登记时间"}];
+    s.created=String(b.created).trim().replace("T"," ");
+  }
   sv();return[200,{ok:true}];
 }
 function delSim(tk,id){
@@ -3843,7 +3850,11 @@ async function renderSimTable(){
       if(d.reg_records.length>4)recShow+="<div style=\"color:var(--faint)\">+ "+(d.reg_records.length-4)+" 条更早</div>";
       recShow+="</div>";
     }
-    h+="<tr><td><b>"+esc(d.sim_no||"—")+"</b>"+(d.box_no?(d.box_slot?" <span class=\"tag tag-cyan\" style=\"font-size:11px;padding:2px 8px\">"+esc(d.box_no)+"号盒 · 编号"+esc(d.box_slot)+"</span>":" <span class=\"tag tag-cyan\" style=\"font-size:11px;padding:2px 8px\">"+esc(d.box_no)+"号盒</span>"):"")+recShow+"</td><td>"+esc(d.sim_type||"—")+"</td>"+extraTds+"<td>"+bindHtml+"</td><td>"+useTd+retTag+simCheckinTag(s)+simBindTag(s)+"</td><td class=\"num\">"+esc(s.created)+"</td><td style=\"white-space:nowrap\">";
+    // v13.60：登记时间可单击修改（主管/组长/卡的登记人）
+    var createdTd=canManage
+      ?"<td class=\"num\" title=\"单击修改登记时间\" onclick=\"simCreatedEdit('"+s.id+"',this)\" style=\"cursor:pointer\">"+esc(s.created)+" ✎</td>"
+      :"<td class=\"num\">"+esc(s.created)+"</td>";
+    h+="<tr><td><b>"+esc(d.sim_no||"—")+"</b>"+(d.box_no?(d.box_slot?" <span class=\"tag tag-cyan\" style=\"font-size:11px;padding:2px 8px\">"+esc(d.box_no)+"号盒 · 编号"+esc(d.box_slot)+"</span>":" <span class=\"tag tag-cyan\" style=\"font-size:11px;padding:2px 8px\">"+esc(d.box_no)+"号盒</span>"):"")+recShow+"</td><td>"+esc(d.sim_type||"—")+"</td>"+extraTds+"<td>"+bindHtml+"</td><td>"+useTd+retTag+simCheckinTag(s)+simBindTag(s)+"</td>"+createdTd+"<td style=\"white-space:nowrap\">";
     // v13.51：打印 50×30mm 标签（手机号+编号），贴20格收纳册用
     h+="<button class=\"btn btn-sm btn-blue\" onclick=\"printSimLabels(['"+s.id+"'],'single')\">🖨 标签</button> ";
     // v13.6：员工可编辑/删除自己登记的电话卡（跟登记手机一样的原理）
@@ -3933,6 +3944,28 @@ async function simCheckin(simId){
     refreshCurrent();
     refreshBadges();
   }catch(e){toast(e.message,"err");}
+}
+// v13.60：表格内单击修改电话卡登记时间（失焦自动保存）
+function simCreatedEdit(simId, td){
+  var cur=String(td.textContent||"").replace("✎","").trim();
+  var val=cur.replace(" ","T").slice(0,16);
+  td.innerHTML="<input type=\"datetime-local\" value=\""+esc(val)+"\" onclick=\"event.stopPropagation()\" style=\"width:170px;box-sizing:border-box;padding:4px 6px;border:1.5px solid var(--line);border-radius:7px;font-size:13px\" onkeydown=\"if(event.key==='Enter')this.blur()\" onblur=\"simCreatedSave('"+simId+"',this)\">";
+  var inp=td.querySelector("input");
+  if(inp){inp.focus();}
+}
+async function simCreatedSave(simId, inp){
+  if(!inp)return;
+  var td=inp.parentNode;
+  var val=inp.value;
+  if(!val){refreshCurrent();return;}
+  try{
+    await apiPost("/api/sims/update",{id:simId,created:val});
+    toast("登记时间已修改");
+    td.innerHTML=esc(val.replace("T"," "))+" ✎";
+  }catch(e){
+    toast(e.message,"err");
+    refreshCurrent();
+  }
 }
 // v13.12：电话卡动态字段单击编辑（员工可编辑自己登记/领用的卡备注）
 async function simInlineEdit(simId, fieldId, type, td){
@@ -4072,6 +4105,7 @@ async function showAddSim(){
   showModal("<h3>登记电话卡</h3>"
     +"<div class=\"field\"><label>卡号<span class=\"req\"> *</span></label><input id=\"s_no\" placeholder=\"如：13800001234\" oninput=\"previewSimType()\"></div>"
     +"<div class=\"field\"><label>运营商（自动识别）</label><div id=\"s_type_preview\" style=\"padding:8px 0;color:var(--accent);font-weight:600\">— 输入卡号后自动显示 —</div></div>"
+    +"<div class=\"field\"><label>登记时间（默认当前，可自选/补录）</label><input id=\"s_created\" type=\"datetime-local\" value=\""+nowLocalStr16()+"\"></div>"
     +simFieldHtml(simfields,null)
     +"<div class=\"field\"><label>绑定设备</label>"+assetSelectHtml(assets.assets,null)+"</div>"
     +"<div class=\"m-btns\"><button class=\"btn btn-ghost\" onclick=\"closeModal()\">取消</button><button class=\"btn btn-primary\" onclick=\"saveAddSim()\">确认登记</button></div><div class=\"err\" id=\"s_err\"></div>");
@@ -4105,8 +4139,11 @@ async function saveAddSim(){
     fd.box_no=pos.box_no;
   }
   var assetId=document.getElementById("s_asset").value;
+  // v13.60：登记时间（自选）
+  var createdEl=document.getElementById("s_created");
+  var createdVal=createdEl?createdEl.value:"";
   try{
-    await apiPost("/api/sims",{data:fd,asset_id:assetId});
+    await apiPost("/api/sims",{data:fd,asset_id:assetId,created:createdVal});
     toast("登记成功 "+fd.box_no+"号盒"+(fd.box_slot?(" · 编号"+fd.box_slot):""));closeModal();
     // v13.49：统一实时刷新（按当前页面整页重绘，含仓库页）
     refreshCurrent();
@@ -4183,12 +4220,14 @@ async function showEditSim(id){
   showModal("<h3>编辑电话卡</h3>"
     +"<div class=\"field\"><label>卡号<span class=\"req\"> *</span></label><input id=\"s_no\" value=\""+esc(d.sim_no||"")+"\" oninput=\"previewSimType()\"></div>"
     +"<div class=\"field\"><label>运营商（自动识别）</label><div id=\"s_type_preview\" style=\"padding:8px 0;color:var(--accent);font-weight:600\">"+esc(detectOperator(d.sim_no||""))+"</div></div>"
+    +"<div class=\"field\"><label>登记时间（可修改）</label><input id=\"s_created\" type=\"datetime-local\" value=\""+esc(String(s.created||"").replace(" ","T").slice(0,16))+"\"></div>"
     +simFieldHtml(simfields,d)
     +recHtml
     +"<div class=\"field\"><label>绑定设备"+(bindLock?"<span style=\"color:var(--orange);font-size:11px\">（需在选项管理开启权限）</span>":"")+"</label>"+assetSelectHtml(assets.assets,s.asset_id,bindLock)+"</div>"
     +"<div class=\"m-btns\"><button class=\"btn btn-ghost\" onclick=\"closeModal()\">取消</button><button class=\"btn btn-primary\" onclick=\"saveEditSim('"+id+"')\">保存修改</button></div><div class=\"err\" id=\"s_err\"></div>");
   // 初始化编辑用注册记录缓存
   window.__regRecs=recs.map(function(r){return {date:r.date||"",type:r.type||"注册",note:r.note||""};});
+  window.__origCreated=String(s.created||""); // v13.60：记录原登记时间，用于判断是否改动
 }
 // v13.59：注册记录编辑辅助
 function regRecAdd(){
@@ -4238,8 +4277,16 @@ async function saveEditSim(id){
   if(recs.length)fd.reg_records=recs;
   else delete fd.reg_records;
   var assetId=document.getElementById("s_asset").value;
+  var body={id:id,data:fd,asset_id:assetId};
+  // v13.60：登记时间改了才提交（避免无权限员工改备注时被拦）
+  var createdEl=document.getElementById("s_created");
+  if(createdEl){
+    var newC=createdEl.value;
+    var oldC=String(window.__origCreated||"").replace(" ","T").slice(0,16);
+    if(newC&&newC!==oldC)body.created=newC;
+  }
   try{
-    await apiPost("/api/sims/update",{id:id,data:fd,asset_id:assetId});
+    await apiPost("/api/sims/update",body);
     toast("已保存");closeModal();refreshCurrent();
   }catch(e){document.getElementById("s_err").textContent=e.message;}
 }
