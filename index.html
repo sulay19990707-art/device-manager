@@ -1688,6 +1688,10 @@ window.fetch=function(url,opts){
 // ============ 前端 ============
 var ROLE_LABELS={supervisor:"主管",leader:"组长",member:"员工"};
 var STATE={user:null},CURRENT_PAGE="",ASSET_FILTER="",ASSET_GROUP="",MYDEV_TYPE="",WH_MODEL="",WH_STATUS="available",WH_REASON="",WH_PLATFORM="",ASSET_PLATFORM="",REVIEW_FILTER="",REVIEW_KW="",REVIEW_USER="",REVIEW_DONE_TYPE="",REVIEW_DONE_USER="",SHIP_FILTER_REASON="",SHIP_FILTER_USER="",SHIP_FILTER_MODEL="",SIM_FILTER_USER="",SIM_STATUS_FILTER="",SIM_CHECKIN_FILTER="",SIM_BOX_FILTER="",SIM_WH_STATUS="",SIM_WH_TYPE="";
+// v13.62：电话卡多选（勾选集合，用于批量打印/导出）
+var SIM_SELECTED={};
+// v13.62：手机号脱敏打印（默认关）
+var SIM_MASK=false;
 var REQ_TYPES={take:["领用","tag-blue"],repair:["报修","tag-orange"],return:["退还","tag-purple"],delete:["删除","tag-red"],edit:["修改","tag-purple"],ship:["寄出","tag-purple"],sim_take:["领卡","tag-blue"],sim_return:["退卡","tag-purple"],sim_transfer:["转卡","tag-purple"]};
 var REQ_STATUS={pending:["待审核","tag-orange"],approved:["已同意","tag-green"],rejected:["已拒绝","tag-red"],cancelled:["已撤销","tag-gray"]};
 
@@ -3682,7 +3686,8 @@ async function renderSims(){
     (data.sims||[]).forEach(function(s){var v=s.data&&s.data.sim_status;if(v==="在库")stS.inK++;else if(v==="在用")stS.inUse++;else if(v==="停用")stS.stop++;else if(v==="遗失")stS.lost++;});
     h+="<div class=\"kpi-row\">"+kpiCard("总卡数","#0a84ff",stS.total)+kpiCard("在库","#34c759",stS.inK)+kpiCard("在用","#7c5cff",stS.inUse)+kpiCard("停用","#ff9500",stS.stop)+kpiCard("遗失","#ff3b30",stS.lost)+"</div>";
   }
-  h+="<div class=\"filter-bar\"><input id=\"simSearch\" placeholder=\"搜索卡号/运营商/绑定设备/盒位\" oninput=\"renderSimTable()\"><button class=\"btn btn-primary\" style=\"background:#7c5cff;border-color:#7c5cff\" onclick=\"openSnap('sim')\">📷 拍照录卡</button><button class=\"btn btn-primary\" onclick=\"showAddSim()\">＋ 登记电话卡</button>"+(isMinePage?"":"<button class=\"btn btn-ghost\" onclick=\"exportSimsCSV()\">📥 导出 Excel</button>")+"<button class=\"btn btn-ghost\" onclick=\"printSimLabels(window.__simListIds||[],'batch')\">🖨 打印本页全部标签</button> <button class=\"btn btn-ghost\" onclick=\"printTestLabel()\">🧪 打印测试页</button></div>";
+  h+="<div class=\"filter-bar\"><input id=\"simSearch\" placeholder=\"搜索卡号/运营商/绑定设备/盒位\" oninput=\"renderSimTable()\"><button class=\"btn btn-primary\" style=\"background:#7c5cff;border-color:#7c5cff\" onclick=\"openSnap('sim')\">📷 拍照录卡</button><button class=\"btn btn-primary\" onclick=\"showAddSim()\">＋ 登记电话卡</button>"+(isMinePage?"":"<button class=\"btn btn-ghost\" onclick=\"exportSimsCSV()\">📥 导出 Excel</button>")+"<button class=\"btn btn-ghost\" onclick=\"openPrintDialog()\">🖨 打印标签</button> <button class=\"btn btn-ghost\" onclick=\"printTestLabel()\">🧪 打印测试页</button></div>";
+  h+="<div id=\"simSelBar\" class=\"filter-bar\" style=\"display:none;background:#f0f7ff;border:1px solid #cfe4ff;border-radius:10px;padding:8px 12px;align-items:center;gap:8px\"></div>";
   // v13.34/v13.35：按盒号快捷筛选（所有人可见，点盒号看该盒10张卡）+ 打印盒贴（主管/组长）
   h+="<div class=\"filter-bar\" style=\"flex-wrap:wrap\" id=\"simBoxBar\">加载盒号…</div>";
   // v13.9：主管/组长 状态快捷分类（带数量）+ 按人快捷分类（带数量）
@@ -3698,7 +3703,7 @@ async function renderSims(){
     if(f.id==="sim_type"&&f.label==="运营商")return; // 运营商并入卡号列展示，避免重复
     extraThs+="<th>"+esc(f.label)+"</th>";
   });
-  h+="<div class=\"card\"><div class=\"c-head\"><h3>"+(isMinePage?"我的电话卡":"电话卡列表")+"</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th>卡号</th><th>运营商</th>"+extraThs+"<th>绑定设备</th><th>使用人</th><th>登记时间</th><th>操作</th></tr></thead><tbody id=\"simBody\"></tbody></table></div></div>";
+  h+="<div class=\"card\"><div class=\"c-head\"><h3>"+(isMinePage?"我的电话卡":"电话卡列表")+"</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th style=\"width:34px;text-align:center\"><input type=\"checkbox\" id=\"simCkAll\" onclick=\"toggleSimAll(this)\" title=\"全选/取消全选\" style=\"width:17px;height:17px\"></th><th>卡号</th><th>运营商</th>"+extraThs+"<th>绑定设备</th><th>使用人</th><th>登记时间</th><th>操作</th></tr></thead><tbody id=\"simBody\"></tbody></table></div></div>";
   // v13.9：主管/组长 领用/退卡记录 + 运营商分布统计
   if(!isMinePage){
     h+="<div class=\"card\"><div class=\"c-head\"><h3>领用/退卡记录</h3></div><div class=\"c-body\" id=\"simReqBody\"></div></div>";
@@ -3822,7 +3827,12 @@ function printLabels(items,mode){
   // v13.51：打印设置引导条（仅屏幕显示，打印时隐藏）
   css+=".hint{position:fixed;top:0;left:0;right:0;background:#fff8e1;color:#7a5b00;border-bottom:2px solid #ffc107;padding:10px 14px;font-size:14px;font-weight:bold;z-index:999}@media print{.hint{display:none}}body{padding-top:0}";
   function cell(it){
-    return "<div class=\"label\"><div class=\"ph\">手机号："+esc(it.no||"—")+"</div><div class=\"op\">运营商："+esc(it.op||"—")+"</div><div class=\"no\">编号："+esc(it.slot||"—")+"</div></div>";
+    var noStr=it.no||"—";
+    if(SIM_MASK){
+      var digits=String(noStr).replace(/\D/g,"");
+      if(digits.length>=7)noStr=digits.slice(0,3)+"****"+digits.slice(-4);
+    }
+    return "<div class=\"label\"><div class=\"ph\">手机号："+esc(noStr)+"</div><div class=\"op\">运营商："+esc(it.op||"—")+"</div><div class=\"no\">编号："+esc(it.slot||"—")+"</div></div>";
   }
   var h="<html><head><meta charset=\"utf-8\"><title>电话卡标签打印</title><style>"+css+"</style></head><body>";
   h+="<div class=\"hint\">🖨 打印设置：打印机选「DP23 Label Printer」 · 纸张选「50×30 / 50x30mm」 · 方向「横向」 · 边距「无」 · 缩放「100%」</div>";
@@ -3833,6 +3843,133 @@ function printLabels(items,mode){
   if(!w){toast("请允许弹出窗口","err");return;}
   w.document.write(h);
   w.document.close();
+}
+// ===== v13.62：电话卡多选 + 打印优化 =====
+// 单选：勾选/取消一张卡
+function toggleSimRow(el){
+  var id=el.getAttribute("data-id");
+  if(el.checked)SIM_SELECTED[id]=1;else delete SIM_SELECTED[id];
+  renderSimSelBar();
+  syncSimCkAll();
+  renderSimTable();
+}
+// 全选/取消全选（当前筛选结果）
+function toggleSimAll(el){
+  var ids=window.__simListIds||[];
+  if(el.checked){ids.forEach(function(id){SIM_SELECTED[id]=1;});}
+  else{ids.forEach(function(id){delete SIM_SELECTED[id];});}
+  renderSimTable();
+}
+// 同步全选框状态（部分选中显示 indeterminate）
+function syncSimCkAll(){
+  var all=document.getElementById("simCkAll");if(!all)return;
+  var ids=window.__simListIds||[];
+  var sel=ids.filter(function(id){return SIM_SELECTED[id];}).length;
+  all.checked=ids.length>0&&sel===ids.length;
+  all.indeterminate=sel>0&&sel<ids.length;
+}
+// 批量操作栏（有勾选才显示）
+function renderSimSelBar(){
+  var bar=document.getElementById("simSelBar");if(!bar)return;
+  var n=Object.keys(SIM_SELECTED).length;
+  if(!n){bar.style.display="none";bar.innerHTML="";return;}
+  bar.style.display="flex";
+  bar.innerHTML='<b style="font-size:14px;color:#0369a1">已选 '+n+' 张</b>'
+    +'<button class="btn btn-sm btn-primary" onclick="printSimSelected()">🖨 打印选中标签 ('+n+')</button>'
+    +'<button class="btn btn-sm btn-ghost" onclick="exportSimSelected()">📥 导出选中</button>'
+    +'<button class="btn btn-sm btn-ghost" onclick="clearSimSelect()">✕ 取消选择</button>';
+}
+function clearSimSelect(){
+  SIM_SELECTED={};
+  renderSimTable();
+}
+// 全选当前筛选
+function selectAllSim(){
+  (window.__simListIds||[]).forEach(function(id){SIM_SELECTED[id]=1;});
+  renderSimTable();
+}
+// 选中卡是否都在同一盒（用于智能判断是否连续打印）
+function simBoxOf(id){
+  var s=(D.simcards||[]).find(function(x){return x.id===id;});
+  return s&&s.data?(s.data.box_no||""):"";
+}
+// 打印选中标签：同盒的按编号排序，便于连续贴入收纳册
+function printSimSelected(){
+  var ids=Object.keys(SIM_SELECTED);
+  if(!ids.length){toast("请先勾选电话卡","err");return;}
+  ids.sort(function(a,b){
+    var ba=simBoxOf(a),bb=simBoxOf(b);
+    if(ba!==bb)return (parseInt(ba,10)||999)-(parseInt(bb,10)||999);
+    var sa=(D.simcards||[]).find(function(x){return x.id===a;});
+    var sb=(D.simcards||[]).find(function(x){return x.id===b;});
+    var na=parseInt((sa&&sa.data&&sa.data.box_slot)||"999",10)||999;
+    var nb=parseInt((sb&&sb.data&&sb.data.box_slot)||"999",10)||999;
+    return na-nb;
+  });
+  printSimLabels(ids,"batch");
+}
+// 导出选中
+function exportSimSelected(){
+  var ids=Object.keys(SIM_SELECTED);
+  if(!ids.length){toast("请先勾选电话卡","err");return;}
+  var rows=[];
+  ids.forEach(function(id){
+    var s=(D.simcards||[]).find(function(x){return x.id===id;});
+    if(!s||!s.data)return;
+    var d=s.data;
+    rows.push([d.sim_no||"",d.sim_type||detectOperator(d.sim_no||""),d.sim_status||"",d.box_no||"",d.box_slot||"",d.reg_status||"",d.reg_platform||"",d.reg_account||"",s.user_name||"",s.created_by_name||"",s.created||""]);
+  });
+  exportCSV("选中电话卡-"+todayStr()+".csv",["卡号","运营商","状态","盒号","编号","注册状态","注册平台","注册账号","使用人","登记人","登记时间"],rows);
+}
+// ===== 打印设置弹窗（选范围 + 选项）=====
+var PRINT_SCOPE="filter", PRINT_ONLY_SELECTED=false;
+function openPrintDialog(){
+  var selN=Object.keys(SIM_SELECTED).length;
+  var listN=(window.__simListIds||[]).length;
+  var allN=(D.simcards||[]).length;
+  var scopeHtml="";
+  function opt(v,label,n,dis){
+    return '<label style="display:flex;align-items:center;gap:8px;padding:11px 12px;border:1.5px solid '+(PRINT_SCOPE===v?"#0a84ff":"var(--line)")+';border-radius:10px;margin-bottom:8px;cursor:'+(dis?"not-allowed":"pointer")+';'+(dis?"opacity:.45":"")+(PRINT_SCOPE===v?";background:#f0f7ff":"")+'">'
+      +'<input type="radio" name="pScope" value="'+v+'" '+(PRINT_SCOPE===v?"checked":"")+' '+(dis?"disabled":"")+' onchange="PRINT_SCOPE=this.value;openPrintDialog()" style="width:17px;height:17px">'
+      +'<span style="flex:1;font-size:14px">'+label+'</span><b style="color:var(--sub)">'+n+' 张</b></label>';
+  }
+  scopeHtml+=opt("selected","仅打印勾选的卡",selN,selN===0);
+  scopeHtml+=opt("filter","打印当前筛选结果",listN,listN===0);
+  scopeHtml+=opt("all","打印全部电话卡",allN,allN===0);
+  var scopeN=PRINT_SCOPE==="selected"?selN:(PRINT_SCOPE==="filter"?listN:allN);
+  showModal("<h3>🖨 打印电话卡标签</h3>"
+    +"<div style=\"font-size:12px;color:var(--faint);margin-bottom:10px\">50×30mm 热敏标签 · 每张一页连续出纸</div>"
+    +"<div style=\"font-weight:600;font-size:13px;margin-bottom:6px\">① 选择打印范围</div>"
+    +scopeHtml
+    +"<div style=\"font-weight:600;font-size:13px;margin:14px 0 6px\">② 打印选项</div>"
+    +"<label style=\"display:flex;align-items:center;gap:8px;padding:9px 12px;border:1.5px solid var(--line);border-radius:10px;margin-bottom:8px;cursor:pointer\">"
+    +"<input type=\"checkbox\" id=\"pMask\" "+(SIM_MASK?"checked":"")+" onchange=\"SIM_MASK=this.checked\" style=\"width:17px;height:17px\">"
+    +"<span style=\"font-size:14px\">手机号脱敏（中间4位打码，如 138****1234）</span></label>"
+    +"<div style=\"padding:10px 12px;background:#f8fafc;border-radius:10px;font-size:12px;color:var(--sub);line-height:1.8\">"
+    +"打印设置：打印机「DP23 Label Printer」· 纸张「50×30mm」· 边距「无」· 缩放「100%」</div>"
+    +"<div class=\"m-btns\"><button class=\"btn btn-ghost\" onclick=\"closeModal()\">取消</button>"
+    +"<button class=\"btn btn-primary\" onclick=\"doPrint()\">🖨 打印这 "+scopeN+" 张</button></div>"
+    +"<div class=\"err\" id=\"pErr\"></div>");
+}
+// 执行打印（按范围取卡 + 同盒排序）
+function doPrint(){
+  var ids=[];
+  if(PRINT_SCOPE==="selected")ids=Object.keys(SIM_SELECTED);
+  else if(PRINT_SCOPE==="filter")ids=(window.__simListIds||[]).slice();
+  else ids=(D.simcards||[]).map(function(s){return s.id;});
+  if(!ids.length){document.getElementById("pErr").textContent="该范围没有可打印的卡";return;}
+  // 同盒的按编号排序
+  ids.sort(function(a,b){
+    var ba=simBoxOf(a),bb=simBoxOf(b);
+    if(ba!==bb)return (parseInt(ba,10)||999)-(parseInt(bb,10)||999);
+    var sa=(D.simcards||[]).find(function(x){return x.id===a;});
+    var sb=(D.simcards||[]).find(function(x){return x.id===b;});
+    var na=parseInt((sa&&sa.data&&sa.data.box_slot)||"999",10)||999;
+    var nb=parseInt((sb&&sb.data&&sb.data.box_slot)||"999",10)||999;
+    return na-nb;
+  });
+  closeModal();
+  printSimLabels(ids,"batch");
 }
 // v13.51：电话卡标签打印（按卡 id，'single'单张 / 'batch'当前列表连续出纸）
 function printSimLabels(ids,mode){
@@ -3991,7 +4128,7 @@ async function renderSimTable(){
     var createdTd=canManage
       ?"<td class=\"num\" title=\"单击修改登记时间\" onclick=\"simCreatedEdit('"+s.id+"',this)\" style=\"cursor:pointer\">"+esc(s.created)+" ✎</td>"
       :"<td class=\"num\">"+esc(s.created)+"</td>";
-    h+="<tr><td><b>"+esc(d.sim_no||"—")+"</b>"+(d.box_no?(d.box_slot?" <span class=\"tag tag-cyan\" style=\"font-size:11px;padding:2px 8px\">"+esc(d.box_no)+"号盒 · 编号"+esc(d.box_slot)+"</span>":" <span class=\"tag tag-cyan\" style=\"font-size:11px;padding:2px 8px\">"+esc(d.box_no)+"号盒</span>"):"")+recShow+"</td><td>"+esc(d.sim_type||"—")+"</td>"+extraTds+"<td>"+bindHtml+"</td><td>"+useTd+retTag+simCheckinTag(s)+simBindTag(s)+"</td>"+createdTd+"<td style=\"white-space:nowrap\">";
+    var ckSel=!!SIM_SELECTED[s.id];    h+="<tr"+(ckSel?" style=\"background:#f0f7ff\"":"")+"><td style=\"text-align:center\"><input type=\"checkbox\" class=\"simRowCk\" data-id=\""+s.id+"\""+(ckSel?" checked":"")+" onclick=\"toggleSimRow(this)\" style=\"width:17px;height:17px\"></td><td><b>"+esc(d.sim_no||"—")+"</b>"+(d.box_no?(d.box_slot?" <span class=\"tag tag-cyan\" style=\"font-size:11px;padding:2px 8px\">"+esc(d.box_no)+"号盒 · 编号"+esc(d.box_slot)+"</span>":" <span class=\"tag tag-cyan\" style=\"font-size:11px;padding:2px 8px\">"+esc(d.box_no)+"号盒</span>"):"")+recShow+"</td><td>"+esc(d.sim_type||"—")+"</td>"+extraTds+"<td>"+bindHtml+"</td><td>"+useTd+retTag+simCheckinTag(s)+simBindTag(s)+"</td>"+createdTd+"<td style=\"white-space:nowrap\">";
     // v13.51：打印 50×30mm 标签（手机号+编号），贴20格收纳册用
     h+="<button class=\"btn btn-sm btn-blue\" onclick=\"printSimLabels(['"+s.id+"'],'single')\">🖨 标签</button> ";
     // v13.6：员工可编辑/删除自己登记的电话卡（跟登记手机一样的原理）
@@ -4009,8 +4146,21 @@ async function renderSimTable(){
     h+="</td></tr>";
   });
   var extraCnt=(data.simfields||[]).filter(function(f){return !(f.id==="sim_type"&&f.label==="运营商");}).length;
-  if(!h)h="<tr><td colspan=\""+(6+extraCnt)+"\" class=\"empty\">暂无电话卡，点击右上角登记</td></tr>";
+  if(!h)h="<tr><td colspan=\""+(7+extraCnt)+"\" class=\"empty\">暂无电话卡，点击右上角登记</td></tr>";
   document.getElementById("simBody").innerHTML=h;
+  // v13.62：重绘后同步勾选态 + 批量栏
+  try{
+    Object.keys(SIM_SELECTED).forEach(function(id){
+      if((window.__simListIds||[]).indexOf(id)<0){var b=document.querySelector('.simRowCk[data-id="'+id+'"]');if(!b)delete SIM_SELECTED[id];}
+    });
+    var sel=(window.__simListIds||[]).filter(function(id){return SIM_SELECTED[id];});
+    (window.__simListIds||[]).forEach(function(id){
+      var b=document.querySelector('.simRowCk[data-id="'+id+'"]');
+      if(b){b.checked=!!SIM_SELECTED[id];var tr=b.closest("tr");if(tr)tr.style.background=SIM_SELECTED[id]?"#f0f7ff":"";}
+    });
+    if(typeof renderSimSelBar==="function")renderSimSelBar();
+    if(typeof syncSimCkAll==="function")syncSimCkAll();
+  }catch(e){}
 }
 // v13.33：电话卡签到 helper——判断卡是否需要签到（在用卡 + 超过间隔天数）
 function simNeedCheckin(s){
