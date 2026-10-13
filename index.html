@@ -99,7 +99,18 @@ tr:hover td{background:#fafbfd}
 
 /* 弹窗 */
 .modal-mask{position:fixed;inset:0;z-index:200;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center;padding:20px}
-.modal{background:#fff;border-radius:16px;width:460px;max-width:94vw;max-height:88vh;overflow-y:auto;padding:26px 28px;box-shadow:0 24px 70px rgba(0,0,0,.25)}
+.modal{background:#fff;border-radius:16px;width:460px;max-width:94vw;max-height:88vh;overflow-y:auto;padding:26px 28px;box-shadow:0 24px 70px rgba(0,0,0,.25);position:relative}
+/* v13.61：窗口可拖动（拖顶部区域）+ 可调整大小 */
+.modal.draggable{cursor:default;transition:none}
+.modal.dragging{box-shadow:0 30px 90px rgba(0,0,0,.38);opacity:.97}
+.modal-dragbar{position:absolute;top:0;left:0;right:0;height:38px;cursor:move;border-radius:16px 16px 0 0;display:flex;align-items:center;justify-content:flex-end;padding-right:10px;gap:6px;user-select:none;-webkit-user-select:none;touch-action:none}
+.modal-dragbar::before{content:"";position:absolute;top:9px;left:50%;transform:translateX(-50%);width:38px;height:4px;border-radius:2px;background:#d8dee9}
+.modal-pin{width:22px;height:22px;border-radius:6px;border:1px solid #e2e8f0;background:#f8fafc;color:#94a3b8;font-size:12px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;pointer-events:auto}
+.modal-pin:hover{background:#eef2f7;color:#475569}
+.modal-pin.on{background:#e0f2fe;border-color:#7dd3fc;color:#0369a1}
+.modal-resize{position:absolute;right:0;bottom:0;width:18px;height:18px;cursor:nwse-resize;touch-action:none}
+.modal-resize::after{content:"";position:absolute;right:4px;bottom:4px;width:8px;height:8px;border-right:2px solid #cbd5e1;border-bottom:2px solid #cbd5e1}
+.modal-inner{padding-top:14px}
 .modal h3{font-size:17px;font-weight:700;color:#111;margin-bottom:20px}
 .field{margin-bottom:14px}
 .field label{display:block;font-size:13px;color:var(--sub);margin-bottom:6px;font-weight:500}
@@ -128,6 +139,20 @@ tr:hover td{background:#fafbfd}
 .req-note{font-size:12px;color:var(--faint);margin-top:6px}
 
 /* 响应式 */
+/* v13.61：手机端极简拍照（全屏取景 + 一键快门） */
+#snapWrap{position:fixed;inset:0;background:#000;z-index:9998;display:none;flex-direction:column}
+#snapWrap.on{display:flex}
+#snapVideo{flex:1;width:100%;height:100%;object-fit:cover;background:#000}
+.snap-top{position:absolute;top:0;left:0;right:0;padding:14px 16px;display:flex;justify-content:space-between;align-items:center;background:linear-gradient(180deg,rgba(0,0,0,.6),transparent);color:#fff;font-size:15px;font-weight:600}
+.snap-close{background:rgba(255,255,255,.2);border:none;color:#fff;width:34px;height:34px;border-radius:50%;font-size:18px;line-height:1;cursor:pointer}
+.snap-bottom{position:absolute;bottom:0;left:0;right:0;padding:20px 0 34px;display:flex;justify-content:center;align-items:center;gap:28px;background:linear-gradient(0deg,rgba(0,0,0,.7),transparent)}
+.snap-btn{width:76px;height:76px;border-radius:50%;background:#fff;border:5px solid rgba(255,255,255,.35);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;color:#111;transition:transform .1s}
+.snap-btn:active{transform:scale(.92)}
+.snap-side{width:56px;height:56px;border-radius:50%;background:rgba(255,255,255,.18);border:2px solid rgba(255,255,255,.5);color:#fff;font-size:22px;display:flex;align-items:center;justify-content:center;cursor:pointer}
+.snap-tip{position:absolute;bottom:132px;left:0;right:0;text-align:center;color:#fff;font-size:13px;text-shadow:0 1px 4px rgba(0,0,0,.8);padding:0 20px}
+.snap-prog{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,.82);color:#fff;padding:22px 30px;border-radius:14px;font-size:15px;text-align:center;min-width:230px}
+.snap-bar{height:6px;background:rgba(255,255,255,.25);border-radius:3px;margin-top:14px;overflow:hidden}
+.snap-bar>i{display:block;height:100%;width:0;background:#4ade80;border-radius:3px;transition:width .3s}
 @media(max-width:900px){
   .sidebar{width:60px}
   .sb-logo span,.nav-item span:not(.nav-badge){display:none}
@@ -188,7 +213,11 @@ tr:hover td{background:#fafbfd}
 
 <div class="toast" id="toast"></div>
 <div class="modal-mask" id="modalMask" style="display:none" onclick="if(event.target===this)closeModal()">
-  <div class="modal" id="modalBody"></div>
+  <div class="modal" id="modalBody">
+    <div class="modal-dragbar" id="modalDragbar"><button class="modal-pin" id="modalPin" onclick="toggleModalPin(event)" title="固定窗口位置（不随页面居中）">📌</button></div>
+    <div class="modal-inner" id="modalInner"></div>
+    <div class="modal-resize" id="modalResize" title="拖动调整大小"></div>
+  </div>
 </div>
 
 <script>
@@ -1677,8 +1706,116 @@ var apiPost=function(p,b){return apiJSON(p,{method:"POST",body:JSON.stringify(b)
 var apiDel=function(p){return apiJSON(p,{method:"DELETE"});};
 
 function toast(msg,type){var t=document.getElementById("toast");t.textContent=msg;t.className="toast show "+(type||"ok");setTimeout(function(){t.className="toast";},2400);}
-function showModal(h){document.getElementById("modalBody").innerHTML=h;document.getElementById("modalMask").style.display="flex";}
-function closeModal(){document.getElementById("modalMask").style.display="none";}
+// v13.61：弹窗支持拖动 + 调整大小（拖顶部把手移动，右下角拉伸）
+var MODAL_PINNED=false, MODAL_POS={x:0,y:0}, MODAL_SIZE={w:0,h:0};
+function showModal(h){
+  var inner=document.getElementById("modalInner");
+  if(inner)inner.innerHTML=h;else document.getElementById("modalBody").innerHTML=h;
+  var m=document.getElementById("modalMask");
+  m.style.display="flex";
+  var box=document.getElementById("modalBody");
+  // 重置位置/尺寸，让每个新弹窗居中显示（除非已固定）
+  if(!MODAL_PINNED){box.style.transform="";box.style.margin="";MODAL_POS={x:0,y:0};}
+  if(MODAL_SIZE.w){box.style.width=MODAL_SIZE.w+"px";}
+  if(MODAL_SIZE.h){box.style.maxHeight=MODAL_SIZE.h+"px";}
+  requestAnimationFrame(function(){initModalDrag();});
+}
+function closeModal(){
+  document.getElementById("modalMask").style.display="none";
+  var box=document.getElementById("modalBody");
+  if(box){box.style.transform="";box.classList.remove("dragging");}
+  MODAL_PINNED=false;
+  var pin=document.getElementById("modalPin");if(pin)pin.classList.remove("on");
+  MODAL_POS={x:0,y:0};
+}
+function toggleModalPin(e){
+  if(e)e.stopPropagation();
+  MODAL_PINNED=!MODAL_PINNED;
+  var pin=document.getElementById("modalPin");
+  if(pin)pin.classList.toggle("on",MODAL_PINNED);
+  toast(MODAL_PINNED?"已固定窗口位置":"已取消固定");
+}
+function initModalDrag(){
+  var bar=document.getElementById("modalDragbar"),box=document.getElementById("modalBody");
+  if(!bar||!box)return;
+  box.classList.add("draggable");   // v13.61：每次打开都确保可拖动标记（在 __bound 判断之外）
+  if(bar.__bound)return;
+  bar.__bound=true;
+  var dragging=false,startX=0,startY=0,baseX=0,baseY=0;
+  function down(e){
+    if(e.target.classList&&e.target.classList.contains("modal-pin"))return;
+    var p=e.touches?e.touches[0]:e;
+    dragging=true;
+    startX=p.clientX;startY=p.clientY;baseX=MODAL_POS.x;baseY=MODAL_POS.y;
+    box.classList.add("dragging");
+    // 拖动时改为绝对偏移，避免与居中冲突
+    box.style.transform="translate("+baseX+"px,"+baseY+"px)";
+    document.addEventListener("mousemove",move,{passive:false});
+    document.addEventListener("touchmove",move,{passive:false});
+    document.addEventListener("mouseup",up);
+    document.addEventListener("touchend",up);
+    e.preventDefault();
+  }
+  function move(e){
+    if(!dragging)return;
+    var p=e.touches?e.touches[0]:e;
+    var dx=p.clientX-startX,dy=p.clientY-startY;
+    // 视口边界限制（用固定尺寸计算，避免 rect 受 transform 影响而漂移）
+    var bw=box.offsetWidth||box.clientWidth||400;
+    var bh=Math.min(box.offsetHeight||box.clientHeight||400,window.innerHeight);
+    var maxX=Math.max(0,(window.innerWidth-bw)/2-10);
+    var maxY=Math.max(0,(window.innerHeight-bh)/2-10);
+    var nx=Math.max(-maxX,Math.min(maxX,baseX+dx));
+    var ny=Math.max(-maxY,Math.min(maxY,baseY+dy));
+    MODAL_POS.x=nx;MODAL_POS.y=ny;
+    box.style.transform="translate("+nx+"px,"+ny+"px)";
+    if(e.cancelable)e.preventDefault();
+  }
+  function up(){
+    dragging=false;
+    box.classList.remove("dragging");
+    document.removeEventListener("mousemove",move);
+    document.removeEventListener("touchmove",move);
+    document.removeEventListener("mouseup",up);
+    document.removeEventListener("touchend",up);
+  }
+  bar.addEventListener("mousedown",down);
+  bar.addEventListener("touchstart",down,{passive:false});
+  // 右下角调整大小
+  var rz=document.getElementById("modalResize");
+  if(rz&&!rz.__bound){
+    rz.__bound=true;
+    var rs=false,sx=0,sy=0,sw=0,sh=0;
+    function rdown(e){
+      var p=e.touches?e.touches[0]:e;
+      rs=true;sx=p.clientX;sy=p.clientY;
+      var r=box.getBoundingClientRect();sw=r.width;sh=r.height;
+      document.addEventListener("mousemove",rmove);
+      document.addEventListener("touchmove",rmove,{passive:false});
+      document.addEventListener("mouseup",rup);
+      document.addEventListener("touchend",rup);
+      e.preventDefault();e.stopPropagation();
+    }
+    function rmove(e){
+      if(!rs)return;
+      var p=e.touches?e.touches[0]:e;
+      var w=Math.max(300,Math.min(window.innerWidth-40,sw+(p.clientX-sx)));
+      var h=Math.max(200,Math.min(window.innerHeight-60,sh+(p.clientY-sy)));
+      MODAL_SIZE.w=w;MODAL_SIZE.h=h;
+      box.style.width=w+"px";box.style.maxHeight=h+"px";
+      if(e.cancelable)e.preventDefault();
+    }
+    function rup(){
+      rs=false;
+      document.removeEventListener("mousemove",rmove);
+      document.removeEventListener("touchmove",rmove);
+      document.removeEventListener("mouseup",rup);
+      document.removeEventListener("touchend",rup);
+    }
+    rz.addEventListener("mousedown",rdown);
+    rz.addEventListener("touchstart",rdown,{passive:false});
+  }
+}
 
 // ===== 登录 =====
 async function tryLogin(){
@@ -2475,7 +2612,7 @@ async function renderAssetTable(){
         extraTds+="<td title=\"单击编辑\" onclick=\"inlineEdit('"+a.id+"','"+f.id+"','"+ft+"',this)\" style=\"cursor:pointer\">"+(fv?esc(fv):"<span style=\"color:var(--faint)\">—</span>")+"</td>";
       }
     });
-    h+="<tr><td><b>"+esc(d.type||"—")+"</b></td><td>"+esc(d.model||"—")+"</td><td>"+esc(d.sn||"—")+" <button class=\"link-btn\" onclick=\"showScanModal('"+a.id+"')\" title=\"扫码登记抖音账号\">📷</button></td>"+extraTds+"<td><button class=\"link-btn\" onclick=\"filterByUser(this)\" data-v=\""+a.created_by+"\">"+esc(a.created_by_name)+"</button></td><td>"+(showUser?"<b>"+esc(showUser)+"</b>":"<span style=\"color:var(--faint)\">—</span>")+"</td><td>"+phoneCardTd(a,d)+"</td><td>"+assetTag(a.status)+returnTag(d)+"</td>"+noteTd(d,a)+"<td class=\"num\">"+esc(a.created)+"</td><td>";
+    h+="<tr><td><b>"+esc(d.type||"—")+"</b></td><td>"+esc(d.model||"—")+"</td><td>"+esc(d.sn||"—")+" <button class=\"link-btn\" onclick=\"openSnapAsset('" + a.id + "')\" title=\"扫码登记抖音账号\">📷</button></td>"+extraTds+"<td><button class=\"link-btn\" onclick=\"filterByUser(this)\" data-v=\""+a.created_by+"\">"+esc(a.created_by_name)+"</button></td><td>"+(showUser?"<b>"+esc(showUser)+"</b>":"<span style=\"color:var(--faint)\">—</span>")+"</td><td>"+phoneCardTd(a,d)+"</td><td>"+assetTag(a.status)+returnTag(d)+"</td>"+noteTd(d,a)+"<td class=\"num\">"+esc(a.created)+"</td><td>";
     if(STATE.user.role!=="member")h+="<button class=\"btn btn-sm btn-ghost\" onclick=\"openEditAsset('"+a.id+"',0)\" style=\"margin-right:6px\">编辑</button> <button class=\"btn btn-sm btn-ghost\" onclick=\"showAssetHistory('"+a.id+"')\" style=\"margin-right:6px\">📜 历史</button>";
     // v13.31：主管/组长直接报修（在库/在用/外寄中可报修；维修中/报废/删除不显示）
     if(STATE.user.role!=="member"&&a.status!=="repairing"&&a.status!=="deleted"&&a.status!=="scrapped")h+="<button class=\"btn btn-sm btn-orange\" onclick=\"showRepairAsset('"+a.id+"')\" style=\"margin-right:6px\">🔧 维修</button>";
@@ -3409,7 +3546,7 @@ async function renderSimWarehouse(){
     h+="<div class=\"mb\" style=\"display:flex;gap:10px;align-items:center;flex-wrap:wrap\"><select id=\"swAssignUser\" style=\"height:38px;border:1.5px solid var(--line);border-radius:9px;padding:0 12px;font-size:13px;background:#fff\"><option value=\"\">选择要分配的员工…</option></select><button class=\"btn btn-green\" id=\"swAssignBtn\" onclick=\"simWhAssign()\">📤 分配给所选员工 (0)</button></div>";
   }
   // v13.32：仓库电话卡页也提供"登记电话卡"入口（所有人可登记，登记即在用/本人使用）
-  h+="<div class=\"mb\"><button class=\"btn btn-primary\" onclick=\"showAddSim()\">＋ 登记电话卡</button> <button class=\"btn btn-primary\" id=\"swTakeBtn\" onclick=\"simWhTake()\">📥 申请领用所选 (0)</button><span id=\"swSelInfo\" style=\"font-size:13px;color:var(--sub)\"></span></div>";
+  h+="<div class=\"mb\"><button class=\"btn btn-primary\" style=\"background:#7c5cff;border-color:#7c5cff\" onclick=\"openSnap('sim')\">📷 拍照录卡</button> <button class=\"btn btn-primary\" onclick=\"showAddSim()\">＋ 登记电话卡</button> <button class=\"btn btn-primary\" id=\"swTakeBtn\" onclick=\"simWhTake()\">📥 申请领用所选 (0)</button><span id=\"swSelInfo\" style=\"font-size:13px;color:var(--sub)\"></span></div>";
   // v13.10：行内"领用"按钮（登记时间后，提交申请→主管审核）
   h+="<div class=\"card\"><div class=\"c-head\"><h3>电话卡列表</h3></div><div class=\"c-body\" style=\"padding:0\"><table><thead><tr><th style=\"width:36px\"><input type=\"checkbox\" id=\"swAll\" onchange=\"swToggleAll(this)\"></th><th>卡号</th><th>运营商</th><th>绑定设备</th><th>使用人</th><th>登记时间</th><th>领用</th>"+(isMgr?"<th>操作</th>":"")+"</tr></thead><tbody id=\"swBody\"></tbody></table></div></div>";
   document.getElementById("content").innerHTML=h;
@@ -3545,7 +3682,7 @@ async function renderSims(){
     (data.sims||[]).forEach(function(s){var v=s.data&&s.data.sim_status;if(v==="在库")stS.inK++;else if(v==="在用")stS.inUse++;else if(v==="停用")stS.stop++;else if(v==="遗失")stS.lost++;});
     h+="<div class=\"kpi-row\">"+kpiCard("总卡数","#0a84ff",stS.total)+kpiCard("在库","#34c759",stS.inK)+kpiCard("在用","#7c5cff",stS.inUse)+kpiCard("停用","#ff9500",stS.stop)+kpiCard("遗失","#ff3b30",stS.lost)+"</div>";
   }
-  h+="<div class=\"filter-bar\"><input id=\"simSearch\" placeholder=\"搜索卡号/运营商/绑定设备/盒位\" oninput=\"renderSimTable()\"><button class=\"btn btn-primary\" onclick=\"showAddSim()\">＋ 登记电话卡</button>"+(isMinePage?"":"<button class=\"btn btn-ghost\" onclick=\"exportSimsCSV()\">📥 导出 Excel</button>")+"<button class=\"btn btn-ghost\" onclick=\"printSimLabels(window.__simListIds||[],'batch')\">🖨 打印本页全部标签</button> <button class=\"btn btn-ghost\" onclick=\"printTestLabel()\">🧪 打印测试页</button></div>";
+  h+="<div class=\"filter-bar\"><input id=\"simSearch\" placeholder=\"搜索卡号/运营商/绑定设备/盒位\" oninput=\"renderSimTable()\"><button class=\"btn btn-primary\" style=\"background:#7c5cff;border-color:#7c5cff\" onclick=\"openSnap('sim')\">📷 拍照录卡</button><button class=\"btn btn-primary\" onclick=\"showAddSim()\">＋ 登记电话卡</button>"+(isMinePage?"":"<button class=\"btn btn-ghost\" onclick=\"exportSimsCSV()\">📥 导出 Excel</button>")+"<button class=\"btn btn-ghost\" onclick=\"printSimLabels(window.__simListIds||[],'batch')\">🖨 打印本页全部标签</button> <button class=\"btn btn-ghost\" onclick=\"printTestLabel()\">🧪 打印测试页</button></div>";
   // v13.34/v13.35：按盒号快捷筛选（所有人可见，点盒号看该盒10张卡）+ 打印盒贴（主管/组长）
   h+="<div class=\"filter-bar\" style=\"flex-wrap:wrap\" id=\"simBoxBar\">加载盒号…</div>";
   // v13.9：主管/组长 状态快捷分类（带数量）+ 按人快捷分类（带数量）
@@ -4648,7 +4785,7 @@ async function renderMyDevList(){
     }
     // v13.2：使用人仅显示实际在用者；v13.52：在库设备归属主管/组长（登记人的上级）
     var showUser=myUse?myUse.user_name:(a.status==="available"?inStockOwner(a.created_by):"");
-    h+="<tr><td>"+esc(d.type||"—")+"</td><td>"+esc(d.model||"—")+"</td><td>"+esc(d.sn||"—")+" <button class=\"link-btn\" onclick=\"showScanModal('"+a.id+"')\" title=\"拍照识别抖音账号\">📷</button></td>"+accTd+"<td style=\"white-space:nowrap\">"+whPlatChips(a)+"</td><td>"+phoneCardTd(a,d)+"</td><td>"+assetTag(a.status)+returnTag(d)+(showUser?"<br><span style=\"font-size:11px;color:var(--faint)\">使用人："+esc(showUser)+"</span>":"")+(myReq?"<br><span style=\"font-size:11px;color:var(--orange)\">审核中</span>":"")+"</td>"+noteTd(d,a)+"<td style=\"white-space:nowrap\">";
+    h+="<tr><td>"+esc(d.type||"—")+"</td><td>"+esc(d.model||"—")+"</td><td>"+esc(d.sn||"—")+" <button class=\"link-btn\" onclick=\"openSnapAsset('" + a.id + "')\" title=\"拍照识别抖音账号\">📷</button></td>"+accTd+"<td style=\"white-space:nowrap\">"+whPlatChips(a)+"</td><td>"+phoneCardTd(a,d)+"</td><td>"+assetTag(a.status)+returnTag(d)+(showUser?"<br><span style=\"font-size:11px;color:var(--faint)\">使用人："+esc(showUser)+"</span>":"")+(myReq?"<br><span style=\"font-size:11px;color:var(--orange)\">审核中</span>":"")+"</td>"+noteTd(d,a)+"<td style=\"white-space:nowrap\">";
     if(a.status==="in_use"){
       h+="<button class=\"btn btn-sm btn-orange\" onclick=\"reqReturn('"+a.id+"')\">退回仓库</button> ";
       h+="<button class=\"btn btn-sm btn-orange\" onclick=\"reqRepair('"+a.id+"')\">报修申请</button> ";
@@ -4775,25 +4912,251 @@ async function shipReturn(assetId){
     toast("已确认寄回，手机恢复在用");renderMyDevList();refreshBadges();
   }catch(e){toast(e.message,"err");}
 }
-// ===== v13.1：OCR识别抖音账号（拍照/选图 → GLM-4V-Flash 免费视觉模型） =====
+// ===== v13.61：视觉识别引擎（Agnes 196-key 池，多key轮询+并行分片） =====
 var SCAN_STREAM=null,SCAN_FOR_ASSET="";
-// GLM-4V-Flash 免费模型（key 拆段存储防爬虫粗扫；如被滥用可到 bigmodel.cn 后台删除重建）
-var GLM_KEY=["9eb9cb9f","67fd4639","bd33bd7c","44fb24f5.wGBMvo8ieBQi30Oh"].join("");
-var GLM_URL="https://open.bigmodel.cn/api/paas/v4/chat/completions";
-var GLM_MODEL="glm-4v-flash";
-function showScanModal(assetId){
-  SCAN_FOR_ASSET=assetId;
-  showModal("<h3>📷 识别抖音账号</h3>"
-    +"<video id=\"scanVideo\" autoplay playsinline muted style=\"width:100%;border-radius:10px;background:#000;max-height:45vh\"></video>"
+// v13.61：Agnes 视觉模型 key 池（196个，免费额度）+ 多key轮询 + 并行分片加速
+var AGNES_POOL_RAW=[
+"HksfGeL3RSzVr2JsQICwKnAPwY9SriRzwDEI5GG78xLC0VgU|XcXxkgnVWrdwjkAAHus9za06qlOH58euWgXrfbByqIBdlV6E|ae5OWBI7T7IKm9ihvOjle9mvQUqEN6WtWdwMFJJKDvM4jLyE|jhUc8PZrg7M0q18sNclbVVGxM81JUIsgYasQLO9BVyhWeJaI|7wCrlKoubZECFfHm9h5TJdmIw4yR6PbTPWQeGwy49nDknAQd|MkfEMxcUPYtSHc9e0rakPbDeCO6Z0RWQsZd1qj8B7LgRZ1Ga|ba6GYiOm8SyWSvYT8S8ye4SizPOywG7TFO6OKGn3m2m8RkHm|z4SjKB4obCidQBpg2dhGygDFSSPdXzLOzRXzHp4Y8he8LoKb|2YpchHoaxuPqIEU95vfvK8j2D5h4bDskRB8fR2hYRZe6vFoB|pZV3WKhM01WSlZp5GRojuJHwBf7jFL38czHSarEZHxsyjUGG|MLgjOP1OxVHeEEmw3L0KeEsEcQ7sl1gcYRJLIVPjqlrUQmhf|skLvAq7jTYXbf3kudXKduT1H5I3vnnnhz0vpkitw4THMmNd1|E9ogtpiX0U52",
+"nizkCA7hHcIgd0bfZ8se3qjJyuLmMWoR5MXL|jfVJ2B54g5Di6wliXWMLP2iPXd31hqXn1HkK38GljhHh3K4t|irwhLtwuB7YE4bPjOpExTpQM3RisYay17X1vY4TY8cjrvl6H|G5ZL62tifc0Xk5L53tjhQZDfN0gNuCLi9wSV5TsGxPoNnrHZ|5RfNfTfCu16MFtpE5AwiDhPv6oX0wnnHK211nciRfJZ0jtGo|Yd2Xtq1SK2PDdgEzOKcYEfRQGqp1o8FhZedoWybuDTgCZyUD|4mwWS7d6EH7LvShacQmiMZ8TMIZdB5XM5BVuLnuB8TTA0D1F|hCNFGfVlbOCvqWCH3bv0SBud6gjfOpmVjp3HooFP1INlY0HY|eC5ro5bUyBYXEBlTzK5j6bKbWAt4S3JM1JbzEPYcL7sIGhPc|nTxPXyD0IQ3kBmPhV4WZAt15O6HCl6UnU5WflGTpEMYiLizG|tJKwcq3KQ9Pk4KSLaWL0kraKYwJjBVJ0ehwlb4tZcCHEf5M2|LufxUVxvwkrMI6P9ownpHarH5f93HaEPsAWymjMTj4gemBFB|LCyFZgAIfUP8YdCDGoWzeVGo",
+"p30dYzlQXlVKI6ZZsWDaruTy|MYBDP4miEvNB9Uo810pJbdHB2XNLw5VNAABEG71NLBH47v74|EfnrolLkrUbAsz45YewXMiVu7tyBwU9ZizlBxiodC5Yl76NF|UHNefusiN6P7daGpPxwPni7DpkY4VXNYtgVGhwh8Ye39ODaH|DmW4Y3u6F3wjYwoCrhWxtqkL5GnHk3kK5V1fDUMuK9CQ3u9V|7S2SLD0qCuN8tq1zmOAN7kCdG5E1ZbyDGfD0ZXd40x3OdkEd|WY3yiS981d1Spp0y3K0LR4gZqIoofIGvbcQlnzuhlxbfoOd7|9KnoJ2c1XmoZI8HuZcCroYYAB1zZJjS5OT20z5ezItLdG8va|yk8BzeyM2ox0dcgcauQGaPiC3dXNDRnahgOsHoUVghtVzOKP|FiltVS80gpNlgk8s1UIaTPkWsQGfsvxraIlJCdtmKBTJbriO|bAukOWRPSGH8csf2tOcz9GvRrON2l92FwBHJtZB5RoNqgnZx|OS5ffr8hqDhPEvEFGr4TMwBTMH6CxKrrY7w5QnUIr4UAUfiV|yLZf3D8EWNM5jFr1AI2q2q3Ou98arYFX98Nl",
+"6HrVhaOqeZ5v|N8jTgXuetevfZvaXAvXMTkEdBopjlSjqdhBsaSYlNG39g7Pu|lSBiCfoftCYAf0Ch2hCzLrmwe3PpWiGll1MCvwzcmKXWCJLZ|Jy5KaK1E23F9GDuZKAR0O1TVoWErAc7HZFEsAUCzeiGvYuHg|PIZn5dKEgyvvr0JpDPz0hYpgl5EqoBVhTZQIohntvFev0MYd|oFW4JdqKg5ddDZqkEX2ADMtvOBPgWkOR1kSB23GzNFkbxfOH|macnFjeNK9TYPuS5HySTP1KCP4ICAQqHI4w1C7qnyPlNUkuA|bwII1Bvu4U7alKZr9SaEODngfMmk9rc2JD903tRM6XZzyItE|ZypoYJ9JLvKm8uqIm2hDrySKjRwRv2tDi8ZdBQohaBAgQpuk|DWAfR8pHF8Dp6BPg9OPKzYkW9PBeG2Slkr8XdMxCtQaGxd5b|TxgyepY0PDGDWEA83QqbeimU5CcYQjKO171M4dmZm5y5dmP2|d3lYY40cgL2XyOgnmBeH5eqeQpPSsGNG8QjmTcC6ZgWCxOF1|K4y5Vrq9oFocKSlpi9sGZBtLmgbUeXBzdz5kf49rjogFDcp0",
+"|LSAmUYVkR0DwGpB0r5nQzh15sJTKCrSqyYJu0mbiFmP1BCuk|R12H33rIRdS26WcFIYR6WVN48Mlqbw5aNgiH3cGTZQC2HG65|AprKkpbAYMLIvYS8zLQtbLzPni9U1tbkBSp4GI0SMDWTCxbz|9ND2gKUnw0RZbRuiGBuqIlHm7kYYeUZxsHlSlqTeBcsRQ8p5|52yTvIlPIPgaf0SUbzUhYsrqe5AOETYFlRaomdUmziTDLvmW|tPqd1ROEjsmKDPJwkihpnK4QoZqHqfZ8jAnvEbpRbjEK0Rqq|kEDFqaeB1SItXH4vvrAzoMQvpXakFjJOzQNQy7Kf6xfjzWbp|UM3UL8G8AA5mBwYoB12fBYIUqfES1Sl1UYGUpS1Cm8n1BIZm|pH9MjdcxbbRHSy09hb80xMEZJl2s1Jh1rnBwnOaBxruvR9DP|iWR2avD5cfBeo57SaPbCRioMpV8vPkjqGVcjR9hobaHnoxjT|KLWL7H3kjPvf80VN8LxNGSknylm3HPbMv1VvL79aoWtnN1hJ|0aiP3IgxfC0N0XRPbxx1VnzkK3tBTtJMXqEupXdGkRaDAi2Z|yX2pgd0VZhW",
+"swMK0y1e9MzSPYLjkwiScpVOj0gn37n8v63if|mG60K6EH7g33pADjgtG2szQO6tr22iE4z2MiHp2wrNid7Xb1|lbS5ifc8oPO6cLIDxY11syvdzQBMDNterPNpPCoChJXBAQXg|1Ocb8ekFYTwMrmul67tJn3tnsitdi0HsdB3m1GIfoVIqxQYN|vydxYXcEoNC8c5sqOSI70ajnvq3Mi5nNF0UFS8aewKUWxDum|KEcrBLpBevSpoSiLTt6HR4aCkjznzgKzICkVBMbx88xL68xP|nvkkzQKrfEZGXUc6aD1wc0uGIrYXG7vXYBGpa2QvTAEWQofV|NnHXw2E6YTWqMjZQKd0S0B3M2QJxFCmbm8N0UFz6ZRkQxTOe|nCoItSRqsYwT3NAcx70vWIOUmOaZDj11owzGEJPg4jf4hBFo|vGYGegdyUr0zk6xZZMgHEYcCdsF5FTUEXB47zgjovNcS9li5|XZflIFacKNikBbiAMU44QpTqGMvzMRLMDjpjtDY1ivHwEswl|bbswBwF8G6jOyOxWmXmxwx2jt5vTKP8M7kBCS9gOco5o1sRs|Yb2B2isb2YrxdWkZjjr0JV5",
+"mWjCEBz3fdpyfSaEppGdZcmT7|cNMAx5srQD13lRtJUhaHwlRt5dXXu2Lfbq7sFIY96KDwuB3R|H854TqmMCYBVnVMDWSbLipnebGSfxPZ749dkindT3PF8JoM5|ufPqg3Gtwegsz480GlPZ9yQTEJ3hBSnGEwPsFnjyGBG3o4UJ|7pqTIKtm3NeHCVmPfuPeZJPFKfhFUUPrUlZK3WHfogU0TWdG|PpdsDp5zTPjjM7jRW71IiCDxix87aGnT4smYUNhMheZOwrXx|aXBqzSLvxsNcxNAvZNATexo3f2I2m7s20hgOmp2SbQFc9Trn|gGJwfO5KeZPRjqeGVadclZYIYqp3mRskIsClGkkqGLR9bDOW|C9o31GZ5thaFKNUWwkZnzcQegZa4Ngo1CMABpnFz8YWknQ1S|SseVXBAc99jwMBvXSopy7mR7OOeS26aul9KpZcXfnB5ZwtbK|SEKU0ioU9x8Z010TVrxVdI1A6TGgb1LqdPTfi6UpgVQxUfe5|f0gF0FCpUG5OtsRvThaviN6I4zdebP858cnrrXXRFR3pew0J|UgAQeRw6cGfMKeonn6WRaKuu0l50tVQuW0m",
+"XDvzeN2grjprX|FHtxbaRLaNHLUotGI74qpGS7Gas8mPlx6mnPxRUqpMpsnUOY|Rdwunmb3gvg2JSpYdBwyRxqQ0ItlZHlE3cKoOTCFoIZiTHL1|qMZQ4kytJ2K35t578kq5my6R8fyO9fPPn5RSk5znyODVjdoV|8BfydPZ0vSOqmwPoPDZcEIlB6VjoXbddRX0BtFqmRAdo6Zwj|oGVQb7kiNViLbWu8cUH0K8ZfayI0HOKooinL2be12Z95LkEu|MPJfvyNDFfQEboAmebN9n0jOBqobFaxq90FOGGxmaWblhCKv|MkOQshdRqJjceWctVk5xzzaAVBBHm9fBs9m2hquCP3VvmQTC|H8ahTnPah3ov2J4L77JHhbQEmwGmo11PWR3OrmyEm1ijsuGc|f1H2jinJGtsQ6khMlcfnuUA0UqjefXJhLCafxgZIdZqILCCR|XdDguAXOTidwbLRVbUUmWfhpbrJhhGcaadD0HwgjJders1CI|3Chlfd04DN41JRICUzgNivCfG1VFccNRfZFIZZSjDFbelurZ|ui7wlcVKGx2r0siZSXBvF6aXGdZlvu2I7dhWcTLhVBoNTwQ",
+"U|Hi4wqQ60pV4S1DUp9YLgxhBBUPFbM6k4aeGPfgeSGxEFhxRf|LaMAgDfO6cvwGMjg2mvnCQIj2EkvDfRtw5kbgXUXxRa8kJ3k|mkePQazotdA595WyzIDV5iZiT9U4XAiPFZErYp3CvsiqqgXF|n2lKd4cKAqG5djuHYOMHnarrLbbzymSfxfIXDlHEPWuT2Nc8|w1DbqBvl1J5vi4QNn7vIWI2aZKpp5fuSFyrKuWaQ3tM74h4J|ZXZEPT2u1yOG2MR9BuJ90jhK9af3qm90Sea446Nvnx0y903c|H9EPyl9veqfHpxFEzrQxRsHBmlDrg3kDmCYM1s3vxFPgcON2|IifxzDS7TrQTaXfL5VTmwMn1djQxmt1gRQeOs7R4U4cwxEY3|meg3say5fMX3nYh3661OETOcRmdXVr6XldTuBwpZ0hCck5eX|fCw3HwhdgiRg3nhUcOyK67XL2rGU3uPfEInrpoPHWupoFRwD|4hHjjWHf3BP186Y4xhChCgjkXKCGbwSpAWnQ28lhapoRNnt1|pz9aFZb04VadxQPdMhYCm7m1M8Cmim2of8PpfrhRkcWV6D3U|VB8ePn1KHs",
+"DmrsVrV9M2BWAKjA6TesUMH4viKGygyXqgkN9K|iQy6HuYxpN9t7mxDO1kGqfcSbYKDaBZqC5pKl4NPAupo08nq|HpoKxOwd4cCMX5MzFqbNQV2OurUO1rJzTGV85z49C7Q6hcdE|cJmICFM3F4BKdVKOG3sF1FLFMuQmwqQxhJrxNzBjLnXaPHGk|M7NsUSE0MiC4AtBqMjnPz4AY5SIf8NQhFiaCZC6Wy5igsAQn|FMSV0gfoyaIQ4TTHcvlXlhM1R50GXKH7dxFkKZCyO9sMUqux|kEk1xLOEXMPxSdqqieM6p50w55eLx2ukX3bE9XgBVw9n99ua|OBrl3ct55IQnxMDbv9W9nSazt7XHGR3plV0ZdIETofPJP5ov|VB3GQiZ80SxJqJ7CRSbDtO55Y8udfCuSGhWJKndWrB1X7qKY|nYcizWJ5XFFID6ZQDQTSjhnsQYRhkUYr0QZ5iSQoBO8vN1CN|Mwl9IzEaqO5Hgzh5magIC4GVJJBPna3KGlyeVsbJl9e0r5ej|n0ZdQDNk4Rl2tPqVqyfUlDTfDzEGpxX9sD285GqIIT1X0W5h|9PQzm6oiyXM8J8YaHUJr54",
+"1EWAjYqv6O4RTdbfNgq2zc9I75|GD8tHiv7Gc3EXYxsClOw12fdamAndekQT4Xo5F3NjHQIqr40|1bv3sI4xdrxtDvU1aRTxPyJEI4bNe6B4z5hOwsk5MoKfDZyz|B7dMWE3iSaB44S6Urajmf1aeeJNGIMTSXgDR5zO3YDZ60pnB|fK26ZKWweoWCu9PcJPXQeNsI3XItGlWnda0IaX952W5Dk2pT|lPjRrp4ZIbi6SMbBJHfQou2sWAbMvAIKZqgGv8gqC3qTN541|6SKj3eQyW5mBGb097UVjtXTuwBGMd8WYqfocU04zWDKkZxwJ|vzxDYquLbna0zVRwVl2e50I6jSoPJ6N6EGYRveAJbkJqBpft|mMSNKUsXLvq3L14RzvRWaG1tFp2N1QGGBe66mVAb2405byU8|HLnHmIZIYMOSr92hjImjO2eaZ6qvGC30MzLhJfDONvtEHTeg|OszqW1vJcRx9vcrU61grpV9lPqsWk8FhJ0YzOWQcxdEPp9PL|KD6P8Z7iOFvvu1P22n4y5isW61C7h7dXXrLUwX81aTStGLad|f8ghnqYdKjW60InzGuWuNgy0NdrJDp9HHj",
+"ptCAUXi1cBUqGY|3gDxOeDPc3hP5PzCchWMfuRZsua26M5Jp6UnJufy6FdKjk5e|ri2528OyG4sq1XDPphwjUhni6qV3IeB5DqibyYvE5I4hUAyk|wt237zQYoG4OlDQrwj0lk9f7CjTAF3COhXPxwPoJRRU06a9I|IYBDckPzydJ0HxhimvOMDR4ZjNoyND3Ltzn2UhxKNwFM3IEN|k14VtkmDUBLmjCGGYt7OosaJ7ds8LWb0WqSOrrRUbvdt1DCQ|Ex9ziNCV3yO5ts2tOWd3pBqlWHe6MNP07dieCNZDLdMghvFH|LjDS5HKLnX4Cfctcm5B8wyqWYmYcibZ4j9ULx7aUaXHb8FDv|0WzAMPVDsfPO0nz4yrAbdLCqZX9vSsGOEoONxPXrtdsPD4LD|b5xBZjxIdsn9499N1yMZocmTMIEVRwPdWl7BlZ3IpEUGTJLV|ZmFMgqxZd08bFycwKbHwY9U5GiGLINClsk1XsCBf18d7vdln|4A4WoFFDIrYhzRvNM0JIcAT0bi6cmAOMnROAehXbiue5Ekko|QazuyqlPcKmbH8EuGxaGpDLriN6oNt7C7AH1Yz9KybfcJc",
+"kw|Mf8HuihlRg5cmelSWQYDS3iubcbQYUE758klX7ULCoz0z2Zs|MBJazu3GCAa8w5gqDRbd7hGHN7SRRRMa2xghsphnqiPx9djm|qWV9kTEI292HbhzK3S1AClcrnMAcGlSVnlKe1td5warQLYIJ|gpTPosqjmxLHs6Gx2gGQQYAgluwruxpUpqemEejTgKU4q3XT|1n6hTHa6XXybXujEuGM5t4ZdrHaQ3jJGL4IHqEercSFHuEzw|YAmGCsQmk2wdIlauJ1qIHyziPKybWOIua1q4H2pssLE1t8FQ|9qxmYEv8niQKC8hB20WN0AXp62A6pnRJmcPPIrBnH8MA6Hgm|ESIyuQsbIegID1L1kReEkmsOhPLzSV5fbzlKJjTJE3wl3eWX|gAguEPZruuuOh6tTK5CZPjytVeweLaeSknLgKjJbeFNSVT9Y|TAoCNG3FhL5de4r3yPG5F98E5b5JCdeMDHssFv5DHu2o1KOj|8q3alFS0XIbtfQy3ggxEetbWTXebdvhfX1UxDIXQsNZsMxeV|4VQGuCZB2BrnjzEQFCpqoFtE4wdGD8GlpmUjq5yO7XGoDXSr|HyRre1bUJ",
+"J0qH02NHxKnUQ2I9nce6TdmFqer4u3HuOk8BnAs|QNYEM7tN6N8ObIMA1EOXJpvw2t4YHKLfExQPeYfA37Him83v|CGphpeZ4SgXwczlmtnTN7At6Pn8D4M2b3c1c6X73qP8xGqNU|i0v4nYlNsWkQrWTZpyxlvbATQQigpOjW3X8QtXDAxhLauLJ9|jVGZrA698NzKRbX7brEtCPIgQGrAAnKdcgD7HPBkTuHvolJa|EhGASfmUMmLTa3UIacHHp6Ckb6sTuBqu8CFMJG8dcmLMc0Ag|1p7DleTw3mthuqWH9QPltO7O0z5JoSSm6veEVDi3f9b8lIoo|g08gbwkhdaZExmspvqOWjtx938XGGvrb8BsjfUJQtGmWVlKC|HaFOlyadY3uwX4nntz46fNYHYf1uBSLbFu1U0IKGafcnmZox|I7xh5c4z0F1HR2Apj3Sv41yDbuosZZz2Dg99Ds2reWrRzhxV|oYtOL58qUY8h3J6iNgrNEkzVudEC4e6BU0IGJMrJmkEQNPZ9|xY8LukjPbc1RYJ5MQ6W9o2H7t2NOo9lAAwwpjlJWuxcQTK2V|Q8y19lBRD1u6NTUoKOdRX",
+"111rEU8Yj3oaeUdnJUm0BYAopHt|yObo8qexJy35GTEMCFNTcwvBVINQvn5JfImmPs4qRNBZ36bx|RQjuavQSLFeYxLb1fCYVvUbO6xoHcBf8vTXURaKNN4pjNBBt|OGU3kKfFvihv0QwblITJfdNwVZqN7ufNM9lVEZLNOdHTDPTD|mCACJ06vXx5VlxYd45Xwi9uck8SUdNAZptAgL3XwDWDzn1sl|9IlDQf9NRla7esUV3HEGzbIVNeqHYPo3bFHpgz3o6YawN5iF|Hhsf5H7lx2QiKuQnZO6poPOOJRkKfzpX8FlW5palUcBhH6QM|GhJMpi9Z6bfhxtfHlDB7ZOan9qkCoqfP290pr1ylWAr8kYca|52RgpqIJmHtNe0nxYYcHsmd0i35YyGLWk6AHPTmd7WP3dH9x|GnI6xm8JjUDKhjnYV6m6Yqx9tZyPutJhXJAr4MJkqSxMwSag|m2Y0oIbGSw9ywjQvviOuDLsj2gqEEbBEVoEmRuUdDnbTB0ER|dfX9vK67c4M76vfSR3oNLA3FJD6dwnacpj10CAmKCOkX2CyM|JThYJaPfrLyLPoGf2WiQFPeSCZMeR9aoX",
+"kUzc0u0EfNEdTHz|fKBDxwjOclQnFTQidKJ2sUBdpK2Y6IdkX0xkWEHFXGqQrJFu|vsux60nh8btjCbPeLDOejvCFI2CNr9cgGqzzxf3Px0Y4k7lz|Ge0UQLtSSP8FG1sOQsPC6rRTyGt0ll0L9Unsm9RtAjjjygQQ|q2ub7PyiaFbisH3doUeYGL1R7xJxfiqIPW100xwU1SIC6i4F|ufsTGneIJwPA4rFp9CKPfchYCucwE7TW6xJwUFgd1nNSFFX2|5QdDeTatr0JqmTuYZdWtuedWd32dAL7jtj0iYCFXXjhiJpE5|WFSdPo6YRuQI69ztex0k1n2jCaWCmRGbrgilsIimYahQNiqz|Zlgn5WCXzyFA2sHhZ3YXflmArN8fSlW9QXkWGFyWsEUVbPcY|LrsFxpqE7Ri01lf8XEXiATbVTtPv6uqomYFx7hNeOp3vb1w4|tkRLveE54vzgavLdKPmOlG8K0vKs0pjemq3ocVJwa2gSw6j3|ZB4RKeVzrp2wjC0P7udgyw6vWhzwmJcETZpOtelODegE2W2B|bVjt9i0qEkOe5W1t9zlpudP5ZPumCUxbEY7GLZdcslbYa",
+"nxc"
+].join("");
+
+var AGNES_KEYS=AGNES_POOL_RAW.split("|").filter(function(x){return x;}).map(function(x){return "sk-"+x;});
+var AGNES_URL="https://api.agnes-ai.cn/v1/chat/completions";
+var AGNES_MODEL="agnes-2.5-flash";   // 实测 3.8s，比 glm-4v-flash 更快更准
+var AGNES_MODEL_FALLBACK="agnes-3.0-flash";
+var AGNES_IDX=0, AGNES_BAD={};        // 轮询游标 + 失效key黑名单
+
+// ===== v13.61：手机端极简拍照（一键快门 · 自动识别 · 简单核对）=====
+// 打开全屏相机（手机端主入口）：进入即全屏取景，只有「拍」和「相册」两个按钮
+function openSnapAsset(assetId){SCAN_FOR_ASSET=assetId||"";openSnap("douyin");}
+function openSnap(mode){
+  SCAN_MODE=mode||"sim";
+  if(!document.getElementById("snapWrap")){
+    var d=document.createElement("div");
+    d.id="snapWrap";
+    d.innerHTML='<video id="snapVideo" autoplay playsinline muted></video>'
+      +'<div class="snap-top"><span id="snapTitle">📇 拍照录入电话卡</span><button class="snap-close" onclick="closeSnap()">✕</button></div>'
+      +'<div class="snap-tip" id="snapTip">把电话卡对准框内，点白色按钮拍照</div>'
+      +'<div class="snap-bottom">'
+      +'<div class="snap-side" onclick="snapPick()" title="从相册选">🖼</div>'
+      +'<div class="snap-btn" onclick="snapShot()">拍</div>'
+      +'<div class="snap-side" onclick="snapToggleCam()" title="切换前后摄像头">🔄</div>'
+      +'</div>'
+      +'<input type="file" id="snapFile" accept="image/*" capture="environment" style="display:none" onchange="snapOnPick(this)">';
+    document.body.appendChild(d);
+  }
+  document.getElementById("snapWrap").className="on";
+  var m=SCAN_MODES[SCAN_MODE]||SCAN_MODES.sim;
+  document.getElementById("snapTitle").textContent=m.icon+" 拍照录入 · "+m.label;
+  document.getElementById("snapTip").textContent=m.hint;
+  snapFacing="environment";
+  startSnapCam();
+}
+var SNAP_STREAM=null,SNAP_FACING="environment",SNAP_FACING_VAR="environment";
+function startSnapCam(){
+  var v=document.getElementById("snapVideo");if(!v)return;
+  stopSnapCam();
+  navigator.mediaDevices.getUserMedia({video:{facingMode:SNAP_FACING_VAR,width:{ideal:1920},height:{ideal:1080}},audio:false})
+    .then(function(st){SNAP_STREAM=st;v.srcObject=st;})
+    .catch(function(e){document.getElementById("snapTip").textContent="无法打开相机（"+e.message+"），可点左下角从相册选图";});
+}
+function stopSnapCam(){if(SNAP_STREAM){try{SNAP_STREAM.getTracks().forEach(function(t){t.stop();});}catch(e){}SNAP_STREAM=null;}}
+function closeSnap(){stopSnapCam();var w=document.getElementById("snapWrap");if(w)w.className="";}
+function snapToggleCam(){SNAP_FACING_VAR=(SNAP_FACING_VAR==="environment")?"user":"environment";startSnapCam();}
+function snapPick(){var f=document.getElementById("snapFile");if(f)f.click();}
+function snapOnPick(inp){
+  var file=inp.files&&inp.files[0];if(!file)return;
+  var fr=new FileReader();
+  fr.onload=function(e){snapProcess(String(e.target.result));};
+  fr.readAsDataURL(file);
+  inp.value="";
+}
+function snapShot(){
+  var v=document.getElementById("snapVideo");
+  if(!v||!v.videoWidth){document.getElementById("snapTip").textContent="相机未就绪，请稍候或从相册选图";return;}
+  var c=document.createElement("canvas");
+  c.width=v.videoWidth;c.height=v.videoHeight;
+  c.getContext("2d").drawImage(v,0,0);
+  snapProcess(c.toDataURL("image/jpeg",0.92));
+}
+// 交给识别引擎，显示进度
+function snapProcess(dataUrl){
+  stopSnapCam();
+  showSnapProgress("正在压缩图片…",0);
+  var img=new Image();
+  img.onload=function(){
+    try{
+      var max=1600,sc=Math.min(1,max/Math.max(img.width,img.height));
+      var c=document.createElement("canvas");
+      c.width=Math.max(1,Math.round(img.width*sc));c.height=Math.max(1,Math.round(img.height*sc));
+      c.getContext("2d").drawImage(img,0,0,c.width,c.height);
+      var out=c.toDataURL("image/jpeg",0.88);
+      showSnapProgress("正在识别…",30);
+      runSnapOcr(out);
+    }catch(e){showSnapProgress("图片处理失败："+e.message,100);}
+  };
+  img.onerror=function(){showSnapProgress("图片读取失败，请重拍",100);};
+  img.src=dataUrl;
+}
+function showSnapProgress(msg,pct){
+  var w=document.getElementById("snapWrap");if(!w)return;
+  var el=w.querySelector(".snap-prog");
+  if(!el){
+    el=document.createElement("div");el.className="snap-prog";
+    el.innerHTML='<div id="snapProgMsg"></div><div class="snap-bar"><i id="snapProgBar"></i></div>';
+    w.appendChild(el);
+  }
+  document.getElementById("snapProgMsg").textContent=msg;
+  document.getElementById("snapProgBar").style.width=Math.min(100,pct)+"%";
+}
+function hideSnapProgress(){
+  var w=document.getElementById("snapWrap");if(!w)return;
+  var el=w.querySelector(".snap-prog");if(el)el.remove();
+}
+// 执行识别（分片并行）
+function runSnapOcr(dataUrl){
+  var t0=Date.now();
+  var m=SCAN_MODES[SCAN_MODE]||SCAN_MODES.sim;
+  sliceImage(dataUrl,2,2,60).then(function(pieces){
+    return agnesVisionParallel(pieces,m.prompt,function(done,total){
+      showSnapProgress("识别中 "+done+"/"+total+" 片完成…",30+Math.round(done/total*60));
+    });
+  }).then(function(results){
+    showSnapProgress("识别完成",100);
+    var secs=((Date.now()-t0)/1000).toFixed(1);
+    if(SCAN_MODE==="sim"){
+      var cards=mergeCardResults(results);
+      closeSnap();
+      openSimCheckin(cards,secs);
+    }else{
+      var txt=results.map(function(r){return r.text;}).join("\n");
+      closeSnap();
+      if(SCAN_MODE==="douyin")showOcrResult(parseOcrJson(txt));
+      else showAssetOcrResult(parseAssetJson(txt));
+    }
+  }).catch(function(err){
+    // 降级整图识别
+    showSnapProgress("分片失败，改用整图识别…",50);
+    agnesVision(dataUrl,m.prompt).then(function(txt){
+      closeSnap();
+      if(SCAN_MODE==="sim"){
+        var nums=String(txt||"").match(/1[3-9]\d{9}/g)||[];
+        var uniq={},cards=[];
+        nums.forEach(function(n){if(!uniq[n]){uniq[n]=1;cards.push({num:n,from:"整图"});}});
+        openSimCheckin(cards,((Date.now()-t0)/1000).toFixed(1));
+      }else if(SCAN_MODE==="douyin")showOcrResult(parseOcrJson(txt));
+      else showAssetOcrResult(parseAssetJson(txt));
+    }).catch(function(e2){hideSnapProgress();document.getElementById("snapTip").textContent="识别失败："+e2.message;});
+  });
+}
+// ===== 核对界面（手机端：大按钮、大字号、一屏搞定）=====
+function openSimCheckin(cards,secs){
+  if(!cards||!cards.length){
+    showModal("<h3>😕 没识别到卡号</h3>"
+      +"<div style=\"padding:10px 0;font-size:15px;line-height:1.7\">可能原因：<br>· 卡面反光或模糊<br>· 号码被遮挡<br>· 拍太远了</div>"
+      +"<div style=\"font-size:13px;color:var(--faint)\">建议：把卡平放、光线均匀、离近一点重拍（占满画面 1/2 以上）</div>"
+      +"<div class=\"m-btns\"><button class=\"btn btn-ghost\" onclick=\"closeModal()\">取消</button><button class=\"btn btn-primary\" onclick=\"closeModal();openSnap('sim')\">🔄 重新拍</button></div>");
+    return;
+  }
+  var exist={};
+  (D.simcards||[]).forEach(function(s){if(s.data&&s.data.sim_no)exist[s.data.sim_no]=1;});
+  var dupN=cards.filter(function(c){return exist[c.num];}).length;
+  var newCards=cards.filter(function(c){return !exist[c.num];});
+  window.__snapCards=cards.map(function(c){return {num:c.num,dup:!!exist[c.num],from:c.from};});
+  var rows=newCards.map(function(c){
+    return "<tr><td style=\"width:26px\"><input type=\"checkbox\" class=\"simck\" data-no=\""+c.num+"\" checked style=\"width:20px;height:20px\"></td>"
+      +"<td style=\"font-size:15px;font-weight:600;padding:10px 4px\">"+esc(c.num)+"</td>"
+      +"<td style=\"font-size:12px;color:var(--faint)\">"+esc(detectOperator(c.num))+"</td></tr>";
+  }).join("");
+  var dupHtml="";
+  if(dupN){
+    dupHtml="<div style=\"margin-top:10px;padding:10px 12px;background:#fff8e1;border-radius:9px;font-size:13px;color:#7a5b00\">"
+      +"⚠ "+dupN+" 张在系统里已存在，已自动排除（不会重复录入）</div>";
+  }
+  showModal("<h3>✅ 识别到 "+newCards.length+" 张新卡</h3>"
+    +"<div style=\"font-size:12px;color:var(--faint);margin-bottom:8px\">耗时 "+secs+"s · 核对无误后点下方按钮入库</div>"
+    +(newCards.length
+      ?"<div style=\"max-height:46vh;overflow:auto\"><table style=\"width:100%\"><tbody>"+rows+"</tbody></table></div>"
+      :"<div style=\"padding:14px 0;font-size:15px\">这"+cards.length+"张卡系统里都有了，无需重复录入</div>")
+    +dupHtml
+    +"<div class=\"m-btns\">"
+    +"<button class=\"btn btn-ghost\" onclick=\"closeModal();openSnap('sim')\">🔄 重拍</button>"
+    +(newCards.length?"<button class=\"btn btn-primary\" onclick=\"importSnapCards()\">全部入库（"+newCards.length+"张）</button>":"")
+    +"</div>"
+    +"<div class=\"err\" id=\"simImpErr\"></div>");
+}
+async function importSnapCards(){
+  var cks=document.querySelectorAll(".simck");
+  var nums=[];
+  for(var i=0;i<cks.length;i++){if(cks[i].checked)nums.push(cks[i].getAttribute("data-no"));}
+  if(!nums.length){document.getElementById("simImpErr").textContent="请至少勾选一张";return;}
+  var okN=0,fails=[];
+  var btn=document.querySelector(".m-btns .btn-primary");
+  if(btn)btn.disabled=true;
+  for(var j=0;j<nums.length;j++){
+    document.getElementById("simImpErr").textContent="⏳ 正在入库 "+(j+1)+"/"+nums.length+"…";
+    try{
+      await apiPost("/api/sims",{data:{sim_no:nums[j],sim_type:detectOperator(nums[j]),sim_status:"在库",box_no:"",box_slot:"",note:"["+nowStr().slice(0,10)+" 拍照录入]"}});
+      okN++;
+    }catch(e){fails.push(nums[j]);}
+  }
+  if(fails.length){
+    document.getElementById("simImpErr").textContent="✅ 成功 "+okN+" 张，❌ 失败 "+fails.length+" 张（"+fails.slice(0,2).join("、")+"）";
+    if(btn)btn.disabled=false;
+  }else{
+    toast("✅ 成功入库 "+okN+" 张电话卡");
+    closeModal();refreshCurrent();
+  }
+}
+// v13.61：识别场景（抖音账号 / 电话卡批量 / 设备信息）
+var SCAN_MODE="douyin";
+var SCAN_MODES={
+  douyin:{icon:"🎵",label:"抖音账号",hint:"对准抖音「个人主页」截图（能看清昵称和抖音号）",prompt:"这是一张抖音个人主页截图。请提取页面上的抖音账号信息，只输出JSON（不要markdown代码块，不要任何解释）：{\"nickname\":\"页面上的昵称\",\"douyin_id\":\"页面上的抖音号\"}。识别不到就填空字符串。"},
+  sim:{icon:"📇",label:"电话卡（批量）",hint:"对准电话卡正/反面的手机号，一页多张也能一起识别",prompt:"这是一张电话卡照片。请逐张读取卡上印的手机号码（中国大陆11位，1开头）。只输出号码，每行一个，不要任何解释和其他文字。看不清的不要猜。"},
+  asset:{icon:"📱",label:"设备信息",hint:"对准手机关于本机/型号标签（SN、型号）",prompt:"这是一张手机设备信息的照片。请提取设备信息，只输出JSON（不要markdown代码块）：{\"model\":\"手机型号\",\"sn\":\"序列号SN\"}。识别不到填空字符串。"}
+};
+function showScanModal(assetId,mode){
+  SCAN_FOR_ASSET=assetId||"";
+  SCAN_MODE=mode||"douyin";
+  var m=SCAN_MODES[SCAN_MODE]||SCAN_MODES.douyin;
+  var tabs="";
+  Object.keys(SCAN_MODES).forEach(function(k){
+    var mm=SCAN_MODES[k];
+    tabs+="<button class=\"btn btn-sm "+(k===SCAN_MODE?"btn-primary":"btn-ghost")+"\" style=\"flex:1\" onclick=\"switchScanMode('"+k+"')\">"+mm.icon+" "+mm.label+"</button>";
+  });
+  showModal("<h3>📷 拍照识别 <span style=\"font-size:11px;color:var(--faint);font-weight:400\">Agnes 引擎 · "+AGNES_KEYS.length+" key池</span></h3>"
+    +"<div style=\"display:flex;gap:6px;margin-bottom:10px\">"+tabs+"</div>"
+    +"<video id=\"scanVideo\" autoplay playsinline muted style=\"width:100%;border-radius:10px;background:#000;max-height:40vh\"></video>"
     +"<div style=\"display:flex;gap:8px;margin:8px 0\">"
     +"<button class=\"btn btn-primary\" style=\"flex:1\" onclick=\"snapPhoto()\">📸 拍照识别</button>"
     +"<button class=\"btn btn-ghost\" style=\"flex:1\" onclick=\"pickImage()\">🖼 相册</button>"
     +"</div>"
-    +"<div style=\"font-size:12px;color:var(--faint);margin-top:4px\">对准抖音「个人主页」截图（能看清昵称和抖音号），点「拍照识别」</div>"
+    +"<div style=\"font-size:12px;color:var(--faint);margin-top:4px\">"+m.hint+"</div>"
     +"<div class=\"m-btns\"><button class=\"btn btn-ghost\" onclick=\"closeScan()\">取消</button></div>"
     +"<div class=\"err\" id=\"scanErr\"></div>"
     +"<input type=\"file\" id=\"pickFile\" accept=\"image/*\" style=\"display:none\" onchange=\"onPick(this)\">");
   openCamera();
+}
+function switchScanMode(m){
+  SCAN_MODE=m;
+  var aid=SCAN_FOR_ASSET;
+  stopCam();
+  showScanModal(aid,m);
 }
 function closeScan(){stopCam();closeModal();}
 async function openCamera(){
@@ -4848,26 +5211,222 @@ function setScanErr(msg){
   var el=document.getElementById("scanErr");
   if(el)el.textContent=msg;
 }
-// 调 GLM-4V-Flash 识别，提取昵称+抖音号
-function ocrImage(dataUrl){
-  setScanErr("⏳ 识别中，请稍候…");
-  fetch(GLM_URL,{
-    method:"POST",
-    headers:{"Content-Type":"application/json","Authorization":"Bearer "+GLM_KEY},
-    body:JSON.stringify({
-      model:GLM_MODEL,
-      messages:[{role:"user",content:[
+// v13.61：多key轮询取一个可用 key（跳过失效黑名单，循环196个）
+function agnesNextKey(){
+  for(var i=0;i<AGNES_KEYS.length;i++){
+    var k=AGNES_KEYS[(AGNES_IDX+i)%AGNES_KEYS.length];
+    if(!AGNES_BAD[k]){AGNES_IDX=(AGNES_IDX+i+1)%AGNES_KEYS.length;return k;}
+  }
+  AGNES_BAD={};
+  return AGNES_KEYS[AGNES_IDX++ % AGNES_KEYS.length];
+}
+// 单次视觉识别（可指定key；429/401/失效 → 自动换key重试，最多6个key）
+function agnesVision(dataUrl,prompt,keyPool){
+  var attempt=0,maxTry=6;
+  function tryOne(){
+    if(attempt>=maxTry)return Promise.reject(new Error("已尝试"+maxTry+"个key均失败"));
+    var k=(keyPool&&keyPool.length)?keyPool[attempt%keyPool.length]:agnesNextKey();
+    attempt++;
+    return fetch(AGNES_URL,{
+      method:"POST",
+      headers:{"Content-Type":"application/json","Authorization":"Bearer "+k},
+      body:JSON.stringify({model:AGNES_MODEL,messages:[{role:"user",content:[
         {type:"image_url",image_url:{url:dataUrl}},
-        {type:"text",text:"这是一张抖音个人主页截图。请提取页面上的抖音账号信息，只输出JSON（不要markdown代码块，不要任何解释）：{\"nickname\":\"页面上的昵称\",\"douyin_id\":\"页面上的抖音号\"}。识别不到就填空字符串。"}
-      ]}]
-    })
-  }).then(function(r){return r.json();}).then(function(j){
-    var content=(j.choices&&j.choices[0]&&j.choices[0].message&&j.choices[0].message.content)||"";
-    if(!content){setScanErr("识别失败："+((j.error&&j.error.message)||"无返回")+"，可手动填写");return;}
+        {type:"text",text:prompt}
+      ]}],max_tokens:2000})
+    }).then(function(r){
+      if(r.status===429||r.status===401||r.status===403){AGNES_BAD[k]=1;throw new Error("key限流/失效，自动换key");}
+      return r.json();
+    }).then(function(j){
+      if(j.error){AGNES_BAD[k]=1;throw new Error(String(j.error.message||"接口错误").slice(0,80));}
+      if(j.choices&&j.choices[0]&&j.choices[0].message)return String(j.choices[0].message.content||"");
+      throw new Error("返回格式异常");
+    }).catch(function(err){
+      if(attempt<maxTry)return tryOne();
+      throw err;
+    });
+  }
+  return tryOne();
+}
+// v13.61：调 Agnes 识别，按场景分流（抖音账号 / 电话卡批量 / 设备信息）
+function ocrImage(dataUrl){
+  var t0=Date.now();
+  if(SCAN_MODE==="sim")return ocrSimCards(dataUrl,t0);
+  var m=SCAN_MODES[SCAN_MODE]||SCAN_MODES.douyin;
+  setScanErr("⏳ 识别中（Agnes · key池 "+AGNES_KEYS.length+" 个）…");
+  agnesVision(dataUrl,m.prompt).then(function(content){
+    if(!content){setScanErr("识别失败：无返回，可手动填写");return;}
+    console.log("[Agnes识图] "+SCAN_MODE+" 耗时 "+((Date.now()-t0)/1000).toFixed(1)+"s");
+    if(SCAN_MODE==="asset")return showAssetOcrResult(parseAssetJson(content));
     showOcrResult(parseOcrJson(content));
-  }).catch(function(e){
-    setScanErr("识别失败："+e.message+"，可手动填写");
+  }).catch(function(err){
+    setScanErr("识别失败："+err.message+"，可手动填写");
   });
+}
+// 电话卡批量识别：切成 2x2 分片并行识别（196 key池 → 速度提升数倍）
+function ocrSimCards(dataUrl,t0){
+  setScanErr("⏳ 正在分片并行识别（4片同时跑 · 每片独立key）…");
+  sliceImage(dataUrl,2,2,60).then(function(pieces){
+    if(!pieces.length)throw new Error("切图失败");
+    return agnesVisionParallel(pieces,SCAN_MODES.sim.prompt,function(done,total,label){
+      setScanErr("⏳ 并行识别中 "+done+"/"+total+" 片完成…");
+    });
+  }).then(function(results){
+    var cards=mergeCardResults(results);
+    console.log("[Agnes批量] "+cards.length+" 张卡，耗时 "+((Date.now()-t0)/1000).toFixed(1)+"s");
+    showSimOcrResult(cards,results,t0);
+  }).catch(function(err){
+    // 降级：分片失败 → 整图单次识别
+    setScanErr("分片失败("+err.message+")，改用整图识别…");
+    agnesVision(dataUrl,SCAN_MODES.sim.prompt).then(function(txt){
+      var nums=String(txt||"").match(/1[3-9]\d{9}/g)||[];
+      var uniq={},cards=[];
+      nums.forEach(function(n){if(!uniq[n]){uniq[n]=1;cards.push({num:n,from:"整图"});}});
+      showSimOcrResult(cards,[],t0);
+    }).catch(function(e2){setScanErr("识别失败："+e2.message);});
+  });
+}
+// 电话卡识别结果 → 人工核对界面 → 批量入库
+function showSimOcrResult(cards,results,t0){
+  var dupN=0;
+  var existNums={};
+  (D.simcards||[]).forEach(function(s){if(s.data&&s.data.sim_no)existNums[s.data.sim_no]=1;});
+  var rows=cards.map(function(c,i){
+    var dup=existNums[c.num]?"<span class=\"tag tag-orange\" style=\"font-size:10px\">已存在</span>":"";
+    if(existNums[c.num])dupN++;
+    return "<tr><td style=\"width:30px\"><input type=\"checkbox\" class=\"simck\" data-no=\""+c.num+"\" "+(existNums[c.num]?"":"checked")+"></td>"
+      +"<td><b>"+esc(c.num)+"</b> "+dup+"</td>"
+      +"<td style=\"font-size:11px;color:var(--faint)\">"+esc(detectOperator(c.num))+"</td>"
+      +"<td style=\"font-size:11px;color:var(--faint)\">"+esc(c.from)+"</td></tr>";
+  }).join("");
+  var failN=results.filter(function(r){return !r.ok;}).length;
+  showModal("<h3>📇 识别到 "+cards.length+" 张电话卡</h3>"
+    +"<div style=\"font-size:12px;color:var(--faint);margin-bottom:6px\">耗时 "+((Date.now()-t0)/1000).toFixed(1)+"s（分片并行识别）"
+    +(dupN?" · <span style=\"color:var(--orange)\">"+dupN+" 张已存在，默认不勾选</span>":"")
+    +(failN?" · <span style=\"color:var(--orange)\">"+failN+" 片识别失败</span>":"")
+    +"</div>"
+    +(cards.length?"<div style=\"max-height:45vh;overflow:auto\"><table style=\"width:100%\"><thead><tr><th><input type=\"checkbox\" id=\"ckAll\" checked onclick=\"toggleAllSimCk(this)\"></th><th>卡号</th><th>运营商</th><th>来源</th></tr></thead><tbody>"+rows+"</tbody></table></div>":"<div style=\"color:var(--orange);padding:12px 0\">未识别到手机号，请对准卡面重拍（确保号码清晰）</div>")
+    +"<div style=\"margin-top:10px;font-size:12px;color:var(--faint)\">⚠ 请核对无误后入库，识别结果可能有误</div>"
+    +"<div class=\"m-btns\"><button class=\"btn btn-ghost\" onclick=\"closeModal()\">取消</button>"
+    +"<button class=\"btn btn-primary\" onclick=\"importSimCards()\">批量入库（勾选的）</button></div>"
+    +"<div class=\"err\" id=\"simImpErr\"></div>");
+}
+function toggleAllSimCk(el){
+  var cks=document.querySelectorAll(".simck");
+  for(var i=0;i<cks.length;i++)cks[i].checked=el.checked;
+}
+// 批量入库（走现有 postSim 接口，权限/字段校验一致）
+async function importSimCards(){
+  var cks=document.querySelectorAll(".simck");
+  var nums=[];
+  for(var i=0;i<cks.length;i++){if(cks[i].checked)nums.push(cks[i].getAttribute("data-no"));}
+  if(!nums.length){document.getElementById("simImpErr").textContent="请至少勾选一张卡";return;}
+  var okN=0,failArr=[];
+  document.getElementById("simImpErr").textContent="⏳ 正在入库 0/"+nums.length+"…";
+  for(var j=0;j<nums.length;j++){
+    try{
+      var data={sim_no:nums[j],sim_type:detectOperator(nums[j]),sim_status:"在库",box_no:"",box_slot:"",note:"["+nowStr().slice(0,10)+" 拍照批量录入]"};
+      await apiPost("/api/sims",{data:data});
+      okN++;
+    }catch(e){failArr.push(nums[j]+": "+e.message);}
+    document.getElementById("simImpErr").textContent="⏳ 正在入库 "+(j+1)+"/"+nums.length+"…";
+  }
+  toast("成功入库 "+okN+" 张"+(failArr.length?"，失败 "+failArr.length+" 张":""));
+  if(failArr.length)document.getElementById("simImpErr").textContent="失败："+failArr.slice(0,3).join("；");
+  else{closeModal();refreshCurrent();}
+}
+// 设备信息识别结果
+function parseAssetJson(content){
+  var info={model:"",sn:""},t=String(content||"");
+  var m=t.match(/\{[\s\S]*\}/);
+  if(m){try{var o=JSON.parse(m[0]);info.model=String(o.model||o.型号||"").trim();info.sn=String(o.sn||o.SN||o.序列号||"").trim();}catch(e){}}
+  return info;
+}
+function showAssetOcrResult(info){
+  showModal("<h3>识别结果（设备信息）</h3>"
+    +"<div style=\"font-size:12px;color:var(--faint);margin-bottom:8px\">已自动识别，可修改后保存</div>"
+    +"<div class=\"field\"><label>手机型号</label><input id=\"sc_model\" value=\""+esc(info.model||"")+"\" placeholder=\"自动识别，可修改\"></div>"
+    +"<div class=\"field\"><label>序列号 SN</label><input id=\"sc_sn\" value=\""+esc(info.sn||"")+"\" placeholder=\"自动识别，可修改\"></div>"
+    +"<div class=\"m-btns\"><button class=\"btn btn-ghost\" onclick=\"closeModal()\">取消</button><button class=\"btn btn-primary\" onclick=\"saveAssetOcrResult()\">保存到这台手机</button></div><div class=\"err\" id=\"sc_err\"></div>");
+}
+async function saveAssetOcrResult(){
+  var model=document.getElementById("sc_model").value.trim();
+  var sn=document.getElementById("sc_sn").value.trim();
+  if(!model&&!sn){document.getElementById("sc_err").textContent="没有可保存的内容";return;}
+  var data={};
+  if(model)data.model=model;
+  if(sn)data.sn=sn;
+  try{
+    if(STATE.user.role==="member")await apiPost("/api/actions/edit_my_asset",{asset_id:SCAN_FOR_ASSET,data:data});
+    else await apiPost("/api/actions/edit_asset",{asset_id:SCAN_FOR_ASSET,data:data});
+    toast("已保存到该手机");closeModal();
+    if(STATE.user.role==="member")renderMyDevList();else renderAssetTable();
+  }catch(e){document.getElementById("sc_err").textContent=e.message;}
+}
+// ===== v13.61：并行分片识别引擎（196 key池 → 每片用不同key同时识别，速度提升数倍） =====
+// 把一张大图按网格切成 rows×cols 块，每块用不同 key 并行识别，最后合并结果
+function sliceImage(dataUrl,rows,cols,overlap){
+  return new Promise(function(resolve,reject){
+    var img=new Image();
+    img.onload=function(){
+      try{
+        var pieces=[],ow=img.width,oh=img.height;
+        var tw=Math.ceil(ow/cols),th=Math.ceil(oh/rows);
+        var ov=overlap||0;
+        for(var r=0;r<rows;r++){
+          for(var c=0;c<cols;c++){
+            var sx=Math.max(0,c*tw-ov),sy=Math.max(0,r*th-ov);
+            var sw=Math.min(ow-sx,tw+ov*2),sh=Math.min(oh-sy,th+ov*2);
+            if(sw<=0||sh<=0)continue;
+            var cv=document.createElement("canvas");
+            // 放大到至少 700px 宽，让小字更清晰
+            var scale=Math.max(1,700/sw);
+            cv.width=Math.round(sw*scale);cv.height=Math.round(sh*scale);
+            var ctx=cv.getContext("2d");
+            ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality="high";
+            ctx.drawImage(img,sx,sy,sw,sh,0,0,cv.width,cv.height);
+            pieces.push({row:r,col:c,label:(r+1)+"-"+(c+1),data:cv.toDataURL("image/jpeg",0.9)});
+          }
+        }
+        resolve(pieces);
+      }catch(e){reject(e);}
+    };
+    img.onerror=function(){reject(new Error("图片解码失败"));};
+    img.src=dataUrl;
+  });
+}
+// 并行识别多片（每片独立key，互不排队）
+function agnesVisionParallel(pieces,prompt,onProgress){
+  var keys=AGNES_KEYS.slice();
+  // 打乱key顺序，让每片用不同key，避开单key限流
+  for(var i=keys.length-1;i>0;i--){var j=Math.floor(Math.random()*(i+1));var t=keys[i];keys[i]=keys[j];keys[j]=t;}
+  var done=0,total=pieces.length;
+  var tasks=pieces.map(function(p,i){
+    var myKeys=[keys[i%keys.length],keys[(i+1)%keys.length],keys[(i+2)%keys.length]];
+    return agnesVision(p.data,prompt,myKeys).then(function(txt){
+      done++;
+      if(onProgress)onProgress(done,total,p.label);
+      return {label:p.label,row:p.row,col:p.col,text:txt,ok:true};
+    }).catch(function(e){
+      done++;
+      if(onProgress)onProgress(done,total,p.label);
+      return {label:p.label,row:p.row,col:p.col,text:"",ok:false,err:e.message};
+    });
+  });
+  return Promise.all(tasks);
+}
+// 把多片识别结果里的手机号合并、去重（电话卡批量识别专用）
+function mergeCardResults(results){
+  var seen={},out=[];
+  results.sort(function(a,b){return a.row===b.row?a.col-b.col:a.row-b.row;});
+  results.forEach(function(r){
+    if(!r.ok)return;
+    var nums=String(r.text||"").match(/1[3-9]\d{9}/g)||[];
+    nums.forEach(function(n){
+      if(!seen[n]){seen[n]=1;out.push({num:n,from:r.label});}
+    });
+  });
+  return out;
 }
 // 解析模型输出（容忍 ```json 围栏 / 多余文字 / 模型跑偏）
 function parseOcrJson(content){
