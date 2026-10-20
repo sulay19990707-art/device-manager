@@ -353,7 +353,20 @@ async function pullCloud(force){
   lastPull=now;
   try{
     var res=await fetch(CLOUD_URL+"/rest/v1/app_data?id=eq.1",{headers:{apikey:CLOUD_KEY,Authorization:"Bearer "+CLOUD_KEY}});
+    // v13.64：HTTP 错误不能当成"云端没数据"，否则会用本机数据覆盖云端
+    if(!res.ok){
+      window.CLOUD_OK=false;window.CLOUD_ERR="HTTP "+res.status;
+      console.log("云端加载失败 HTTP "+res.status);
+      return;
+    }
     var rows=await res.json();
+    if(!Array.isArray(rows)){
+      window.CLOUD_OK=false;window.CLOUD_ERR="返回格式异常";
+      console.log("云端返回格式异常",rows);
+      return;
+    }
+    window.CLOUD_OK=true;window.CLOUD_ERR="";
+    window.CLOUD_ROWS=rows.length;
     if(rows&&rows.length&&rows[0].data&&Object.keys(rows[0].data).length){
       if(D_DIRTY){
         pushCloud();
@@ -374,7 +387,10 @@ async function pullCloud(force){
     }else{
       pushCloud();
     }
-  }catch(e){console.log("云端加载失败",e.message);}
+  }catch(e){
+    window.CLOUD_OK=false;window.CLOUD_ERR=e.message;
+    console.log("云端加载失败",e.message);
+  }
 }
 function ensureSimData(){
   if(!D.simfields||!D.simfields.length)D.simfields=[]; // v13.50：运营商改为按卡号自动识别，不再作为手填字段
@@ -447,9 +463,27 @@ function clearToken(){localStorage.removeItem(TOKEN_KEY);}
 function verify(tk){try{if(!tk)return null;var p=tk.split(".");var u=JSON.parse(uatob(p[0]));var u2=D.users.find(function(x){return x.id===u.id;});if(!u2)return null;return u2;}catch(e){return null;}}
 
 // ============ 后端路由 ============
+// v13.64：账号/密码输入容错——全角转半角、去空格、账号大小写不敏感
+function normAcct(s){
+  s=String(s==null?"":s);
+  s=s.replace(/[\uFF01-\uFF5E]/g,function(c){return String.fromCharCode(c.charCodeAt(0)-0xFEE0);});
+  s=s.replace(/\u3000/g," ");
+  return s.replace(/\s+/g,"").toLowerCase();
+}
+function normPwd(s){
+  s=String(s==null?"":s);
+  s=s.replace(/[\uFF01-\uFF5E]/g,function(c){return String.fromCharCode(c.charCodeAt(0)-0xFEE0);});
+  s=s.replace(/\u3000/g," ");
+  return s.trim();
+}
 function postLogin(b){
-  var u=D.users.find(function(x){return x.username===(b.username||"").trim()&&x.password===((b.password||"").trim());});
-  if(!u)return[400,{error:"账号或密码错误"}];
+  var un=normAcct(b.username), pw=normPwd(b.password);
+  var hit=D.users.filter(function(x){return normAcct(x.username)===un;});
+  // v13.64：区分"账号不存在"和"密码错误"，避免误判
+  if(!hit.length)return[400,{error:"账号不存在：没有「"+String(b.username||"").trim()+"」这个账号。若刚建的号，请确认已同步到本机"+(window.CLOUD_OK===false?"（本机未连上云端）":"")+""}];
+  var u=null;
+  for(var i=0;i<hit.length;i++){if(normPwd(hit[i].password)===pw){u=hit[i];break;}}
+  if(!u)return[400,{error:"密码错误：账号「"+hit[0].username+"」存在，密码不对（注意大小写/空格）"}];
   var tk=ubtoa(JSON.stringify({id:u.id}))+"."+ubtoa("s1");
   return[200,{token:tk,user:{id:u.id,name:u.name,role:u.role,username:u.username}}];
 }
@@ -1843,7 +1877,18 @@ async function tryLogin(){
     if(!res.token)throw new Error("登录失败");
     setToken(res.token);STATE.user=res.user;
     showApp();
-  }catch(e){err.textContent=e.message;btn.disabled=false;btn.textContent="登 录";}
+  }catch(e){
+    // v13.64：把"云端通不通 / 本机有几个账号"直接提示出来，避免在"密码错误"上打转
+    var n=(D.users||[]).length;
+    var extra="";
+    if(window.CLOUD_OK===false){
+      extra="。⚠️ 本机未连上云端（"+(window.CLOUD_ERR||"网络异常")+"），只能看到本机存的 "+n+" 个账号";
+    }else{
+      extra="。云端已连通，本机共 "+n+" 个账号";
+    }
+    err.textContent=e.message+extra;
+    btn.disabled=false;btn.textContent="登 录";
+  }
 }
 function showApp(){
   document.getElementById("login").style.display="none";
