@@ -197,7 +197,7 @@ tr:hover td{background:#fafbfd}
     <p class="sub">登记 · 领用 · 报修 · 审核</p>
     <input id="loginUser" placeholder="账号" autocomplete="username">
     <input id="loginPwd" type="password" placeholder="密码" autocomplete="current-password" onkeydown="if(event.key==='Enter')tryLogin()">
-    <button id="loginBtn" onclick="tryLogin()">登 录</button>
+    <button id="loginBtn" onclick="tryLogin()">登 录</button><button id="quickPrintBtn" onclick="openQuickPrint()" style="width:100%;margin-top:10px;padding:11px;background:#f0f7ff;color:#0a84ff;border:1.5px solid #0a84ff;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer">🖨 快捷打印标签</button><div style="font-size:11px;color:#999;margin-top:6px;text-align:center">员工打印：输入手机号+密码+姓名，直接出标签</div>
     <div class="login-err" id="loginErr"></div>
   </div>
 </div>
@@ -4033,6 +4033,50 @@ function exportSimSelected(){
 }
 // ===== 打印设置弹窗（选范围 + 选项）=====
 var PRINT_SCOPE="filter", PRINT_ONLY_SELECTED=false;
+// ===== v13.66：快捷打印（登录页，组员输入手机号+密码+姓名）=====
+function openQuickPrint(){
+  showModal(quickPrintHtml());
+  setTimeout(function(){var e=document.getElementById("qpPhone");if(e)e.focus();},200);
+}
+function quickPrintHtml(){
+  return "<h3>🖨 快捷打印标签</h3>"
+    +"<div style=\"font-size:13px;color:#666;margin-bottom:12px\">输入你的手机号和系统密码，写上名字，直接打印标签。打印机是主管电脑连的 DP23 标签机。</div>"
+    +"<div class=\"field\"><label>手机号</label><input id=\"qpPhone\" placeholder=\"如 13812345678\" style=\"width:100%;padding:10px;border:1.5px solid var(--line);border-radius:8px;font-size:14px\"></div>"
+    +"<div class=\"field\"><label>密码</label><input id=\"qpPwd\" type=\"password\" placeholder=\"系统登录密码\" style=\"width:100%;padding:10px;border:1.5px solid var(--line);border-radius:8px;font-size:14px\"></div>"
+    +"<div class=\"field\"><label>你的名字</label><input id=\"qpName\" placeholder=\"如 张三\" style=\"width:100%;padding:10px;border:1.5px solid var(--line);border-radius:8px;font-size:14px\"></div>"
+    +"<div class=\"m-btns\"><button class=\"btn btn-ghost\" onclick=\"closeModal()\">取消</button><button class=\"btn btn-primary\" onclick=\"qpDo()\">🖨 打印标签</button></div>"
+    +"<div class=\"err\" id=\"qpErr\"></div>";
+}
+function qpDo(){
+  var err=document.getElementById("qpErr");
+  var p=document.getElementById("qpPhone").value.trim();
+  var pw=document.getElementById("qpPwd").value;
+  var nm=document.getElementById("qpName").value.trim();
+  if(!p){err.textContent="请输入手机号";return;}
+  if(!pw){err.textContent="请输入密码";return;}
+  if(!nm){err.textContent="请输入你的名字";return;}
+  var u=(D.users||[]).find(function(x){return (x.username===p||x.phone===p)&&x.password===pw;});
+  if(!u){err.textContent="手机号或密码不对，请确认后重试";return;}
+  closeModal();
+  quickPrintLabels(p,nm);
+}
+// 打印一张标签：手机号/运营商/姓名 + 右下角打印日期
+function quickPrintLabels(phone,name){
+  var op=detectOperator(phone||"");
+  var now=new Date();
+  var dateStr=now.getFullYear()+"-"+String(now.getMonth()+1).padStart(2,"0")+"-"+String(now.getDate()).padStart(2,"0");
+  var css="@page{size:50mm 30mm;margin:0}body{font-family:'Microsoft YaHei','SimHei',sans-serif;margin:0}.label{width:50mm;height:30mm;box-sizing:border-box;border:0.5pt solid #444;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:1mm 2mm;overflow:hidden;position:relative;page-break-after:always}.label:last-child{page-break-after:auto}";
+  css+=".ph{font-size:14px;font-weight:bold;letter-spacing:0.5px;white-space:nowrap}.op{font-size:12px;margin-top:2px;white-space:nowrap;color:#333}.nm{font-size:13px;font-weight:bold;margin-top:2px;white-space:nowrap}.dt{position:absolute;right:2mm;bottom:1.5mm;font-size:9px;color:#777;white-space:nowrap}";
+  css+=".hint{position:fixed;top:0;left:0;right:0;background:#fff8e1;color:#7a5b00;border-bottom:2px solid #ffc107;padding:6px 12px;font-size:12px;text-align:center;z-index:99;print-color-adjust:exact;-webkit-print-color-adjust:exact}";
+  var body="<div class=\"label\"><div class=\"ph\">手机号："+esc(phone)+"</div><div class=\"op\">运营商："+esc(op)+"</div><div class=\"nm\">"+esc(name)+"</div><div class=\"dt\">"+dateStr+"</div></div>";
+  var win=window.open("","_blank");
+  if(!win){toast("浏览器拦截了新窗口，请允许弹出窗口","err");return;}
+  win.document.write("<html><head><title>标签打印</title><style>"+css+"</style></head><body><div class=\"hint\">打印机请选择：DP23 Label Printer · 纸张 50×30mm</div>"+body+"</body></html>");
+  win.document.close();win.focus();
+  setTimeout(function(){win.print();},500);
+  toast("已打开打印预览");
+}
+
 function openPrintDialog(){
   var selN=Object.keys(SIM_SELECTED).length;
   var listN=(window.__simListIds||[]).length;
@@ -5199,8 +5243,8 @@ var AGNES_POOL_RAW=[
 
 var AGNES_KEYS=AGNES_POOL_RAW.split("|").filter(function(x){return x;}).map(function(x){return "sk-"+x;});
 var AGNES_URL="https://api.agnes-ai.cn/v1/chat/completions";
-var AGNES_MODEL="agnes-2.5-flash";   // 实测 3.8s，比 glm-4v-flash 更快更准
-var AGNES_MODEL_FALLBACK="agnes-3.0-flash";
+var AGNES_MODEL="agnes-3.0-flash";   // v13.66：实测单次中位13.6s；2.5-flash已劣化到74s，弃用
+var AGNES_MODEL_FALLBACK="agnes-2.5-flash";
 var AGNES_IDX=0, AGNES_BAD={};        // 轮询游标 + 失效key黑名单
 
 // ===== v13.61：手机端极简拍照（一键快门 · 自动识别 · 简单核对）=====
@@ -5294,39 +5338,46 @@ function hideSnapProgress(){
 function runSnapOcr(dataUrl){
   var t0=Date.now();
   var m=SCAN_MODES[SCAN_MODE]||SCAN_MODES.sim;
-  sliceImage(dataUrl,2,2,60).then(function(pieces){
-    return agnesVisionParallel(pieces,m.prompt,function(done,total){
-      showSnapProgress("识别中 "+done+"/"+total+" 片完成…",30+Math.round(done/total*60));
-    });
-  }).then(function(results){
-    showSnapProgress("识别完成",100);
-    var secs=((Date.now()-t0)/1000).toFixed(1);
+  function finish(txt,secs){
+    closeSnap();
     if(SCAN_MODE==="sim"){
-      var cards=mergeCardResults(results);
-      closeSnap();
+      var nums=String(txt||"").match(/1[3-9]\d{9}/g)||[];
+      var uniq={},cards=[];
+      nums.forEach(function(n){if(!uniq[n]){uniq[n]=1;cards.push({num:n,from:"识别"});}});
       openSimCheckin(cards,secs);
-    }else{
-      var txt=results.map(function(r){return r.text;}).join("\n");
-      closeSnap();
-      // v13.63：手机序号 → 列出所有候选让人选
-      if(SCAN_MODE==="serial")return openSnapPick(parseSerialCandidates(txt),dataUrl,secs);
-      if(SCAN_MODE==="douyin")showOcrResult(parseOcrJson(txt));
-      else showAssetOcrResult(parseAssetJson(txt));
+      return;
     }
+    if(SCAN_MODE==="serial")return openSnapPick(parseSerialCandidates(txt),dataUrl,secs);
+    if(SCAN_MODE==="douyin")return showOcrResult(parseOcrJson(txt));
+    showAssetOcrResult(parseAssetJson(txt));
+  }
+  // 电话卡批量（一图多卡小幅字）仍需分片；其余场景整图竞速最快最准
+  if(SCAN_MODE==="sim"){
+    return sliceImage(dataUrl,2,2,60).then(function(pieces){
+      return agnesVisionParallel(pieces,m.prompt,function(done,total){
+        showSnapProgress("识别中 "+done+"/"+total+" 片…",30+Math.round(done/total*60));
+      });
+    }).then(function(results){
+      var cards=mergeCardResults(results);
+      closeSnap();openSimCheckin(cards,((Date.now()-t0)/1000).toFixed(1));
+    }).catch(function(){
+      return agnesVisionRace(dataUrl,m.prompt,4).then(function(w){finish(w.txt,((Date.now()-t0)/1000).toFixed(1));});
+    });
+  }
+  showSnapProgress("⚡ 极速识别中…",50);
+  var tick=setInterval(function(){
+    var el=document.getElementById("snapProgMsg");
+    if(el)el.textContent="⚡ 极速识别中… "+(((Date.now()-t0)/1000).toFixed(1))+"s";
+  },200);
+  return agnesVisionRace(dataUrl,m.prompt,4).then(function(w){
+    clearInterval(tick);
+    showSnapProgress("识别完成","100");
+    var secs=(w.ms/1000).toFixed(1)+(w.tried>1?" · "+w.tried+"路竞速":" · 单路");
+    finish(w.txt,secs);
   }).catch(function(err){
-    // 降级整图识别
-    showSnapProgress("分片失败，改用整图识别…",50);
-    agnesVision(dataUrl,m.prompt).then(function(txt){
-      closeSnap();
-      if(SCAN_MODE==="sim"){
-        var nums=String(txt||"").match(/1[3-9]\d{9}/g)||[];
-        var uniq={},cards=[];
-        nums.forEach(function(n){if(!uniq[n]){uniq[n]=1;cards.push({num:n,from:"整图"});}});
-        openSimCheckin(cards,((Date.now()-t0)/1000).toFixed(1));
-      }else if(SCAN_MODE==="serial")openSnapPick(parseSerialCandidates(txt),dataUrl,((Date.now()-t0)/1000).toFixed(1));
-      else if(SCAN_MODE==="douyin")showOcrResult(parseOcrJson(txt));
-      else showAssetOcrResult(parseAssetJson(txt));
-    }).catch(function(e2){hideSnapProgress();document.getElementById("snapTip").textContent="识别失败："+e2.message;});
+    clearInterval(tick);
+    showSnapProgress("识别失败："+err.message,"100");
+    setTimeout(closeSnap,1500);
   });
 }
 
@@ -5339,9 +5390,13 @@ function parseSerialCandidates(txt){
   function push(v,tag){
     v=String(v||"").trim().replace(/^["'"""'']+|["'"""'']+$/g,"").trim();
     if(!v)return;
+    // v13.66：三字中文标签直接保留（微亿来/财务部等），豁免长度与字母数字要求
+    if(/^[\u4e00-\u9fa5]+$/.test(v)){
+      if(v.length===3&&!seen["标签:"+v]){seen["标签:"+v]=1;out.push({v:v,tag:"标签",score:90});}
+      return;
+    }
     if(v.length<5||v.length>28)return;
     if(!/[0-9A-Za-z]/.test(v))return;              // 必须含字母数字
-    if(/^[\u4e00-\u9fa5]+$/.test(v))return;        // 纯中文丢掉
     // v13.63：纯字母英文单词丢掉（真实SN必含数字；避免 Designed/Assembled/California 混进候选）
     if(/^[A-Za-z]+$/.test(v))return;
     if(/^[A-Za-z\s]+$/.test(v))return;
@@ -5529,7 +5584,7 @@ var SCAN_MODES={
   sim:{icon:"📇",label:"电话卡（批量）",hint:"对准电话卡正/反面的手机号，一页多张也能一起识别",prompt:"这是一张电话卡照片。请逐张读取卡上印的手机号码（中国大陆11位，1开头）。只输出号码，每行一个，不要任何解释和其他文字。看不清的不要猜。"},
   asset:{icon:"📱",label:"设备信息",hint:"对准手机关于本机/型号标签（SN、型号）",prompt:"这是一张手机设备信息的照片。请提取设备信息，只输出JSON（不要markdown代码块）：{\"model\":\"手机型号\",\"sn\":\"序列号SN\"}。识别不到填空字符串。"},
   // v13.63：手机背面序号——只做OCR不做判断，把所有候选全列出来给人选
-  serial:{icon:"🔢",label:"手机序号",hint:"对准手机背面底部的小字（S/N 或 IMEI 那一行）",prompt:"这是一张手机背面标签的照片。请把照片上所有看起来像编号/序列号的字符串，原样抄下来。不要判断哪个是SN，不要解释，不要加任何说明文字。要求：1)每行只写一个字符串；2)包括S/N后面的值、IMEI后面的数字、MEID、型号编号，以及任何6-20位的字母数字组合；3)保留原始大小写和字符；4)看不清的宁可不要写，不要猜。"}
+  serial:{icon:"🔢",label:"手机序号",hint:"对准手机背面底部的小字（S/N 或 IMEI 那一行）",prompt:"这张照片是手机背面的标签。请找出标签上的两行内容：第一行是三个汉字（例如「微亿来」「财务部」），第二行是紧挨在它下方的一行数字编号。\n只输出这两行原文，第一行汉字，第二行数字，中间换行。不要解释、不要标点、不要补充任何其他内容。"}
 };
 function showScanModal(assetId,mode){
   SCAN_FOR_ASSET=assetId||"";
@@ -5649,6 +5704,45 @@ function agnesVision(dataUrl,prompt,keyPool){
   }
   return tryOne();
 }
+// v13.66：极速竞速识别 —— 同一张图用 N 个不同 key 同时发，谁先回用谁
+// 原理：Agnes 免费池是抽奖式的，有的请求 1 秒回、有的排 40 秒；并发抢最快那条
+function agnesVisionRace(dataUrl,prompt,n,onTick){
+  n=Math.max(1,Math.min(n||4,AGNES_KEYS.length));
+  var t0=Date.now(),settled=0,failed=0;
+  var keys=[];for(var i=0;i<n;i++)keys.push(agnesNextKey());
+  var tasks=keys.map(function(k){
+    return fetch(AGNES_URL,{
+      method:"POST",
+      headers:{"Content-Type":"application/json","Authorization":"Bearer "+k},
+      body:JSON.stringify({model:AGNES_MODEL,messages:[{role:"user",content:[
+        {type:"image_url",image_url:{url:dataUrl}},
+        {type:"text",text:prompt}
+      ]}],max_tokens:300})
+    }).then(function(r){
+      if(r.status===429||r.status===401||r.status===403){AGNES_BAD[k]=1;throw new Error("限流");}
+      return r.json();
+    }).then(function(j){
+      if(j.error){AGNES_BAD[k]=1;throw new Error(String(j.error.message||"").slice(0,60));}
+      var txt=String(j.choices&&j.choices[0]&&j.choices[0].message?j.choices[0].message.content:"");
+      if(!txt.trim())throw new Error("空返回");
+      return {txt:txt,ms:Date.now()-t0};
+    }).catch(function(e){
+      failed++;settled++;
+      if(onTick)onTick(settled,n);
+      throw e;
+    });
+  });
+  return Promise.any(tasks).then(function(w){
+    w.tried=n;
+    return w;
+  }).catch(function(){
+    // 全部失败 → 降级串行重试
+    return agnesVision(dataUrl,prompt).then(function(txt){
+      return {txt:txt,ms:Date.now()-t0,tried:n,fallback:true};
+    });
+  });
+}
+
 // v13.61：调 Agnes 识别，按场景分流（抖音账号 / 电话卡批量 / 设备信息）
 function ocrImage(dataUrl){
   var t0=Date.now();
