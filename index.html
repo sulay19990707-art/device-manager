@@ -153,6 +153,15 @@ tr:hover td{background:#fafbfd}
 .snap-prog{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,.82);color:#fff;padding:22px 30px;border-radius:14px;font-size:15px;text-align:center;min-width:230px}
 .snap-bar{height:6px;background:rgba(255,255,255,.25);border-radius:3px;margin-top:14px;overflow:hidden}
 .snap-bar>i{display:block;height:100%;width:0;background:#4ade80;border-radius:3px;transition:width .3s}
+/* v13.63：识别候选选择（手机端大按钮） */
+.snap-cand{display:flex;align-items:center;gap:10px;padding:13px 14px;border:1.5px solid var(--line);border-radius:10px;background:#fff;cursor:pointer;transition:all .12s}
+.snap-cand:active{transform:scale(.99)}
+.snap-cand.on{border-color:#7c5cff;background:#f5f2ff;box-shadow:0 0 0 2px rgba(124,92,255,.15)}
+.snap-cand-txt{flex:1;font-size:16px;font-weight:600;letter-spacing:.5px;word-break:break-all;font-family:Consolas,Monaco,monospace}
+.snap-cand.on .snap-cand-txt{color:#5b3fd1}
+.snap-cand-tag{font-size:11px;padding:2px 7px;border-radius:6px;background:#eef2ff;color:#4f46e5;font-weight:600;white-space:nowrap}
+.snap-cand-ck{font-size:18px;color:#94a3b8;line-height:1}
+.snap-cand.on .snap-cand-ck{color:#7c5cff}
 @media(max-width:900px){
   .sidebar{width:60px}
   .sb-logo span,.nav-item span:not(.nav-badge){display:none}
@@ -2616,7 +2625,7 @@ async function renderAssetTable(){
         extraTds+="<td title=\"单击编辑\" onclick=\"inlineEdit('"+a.id+"','"+f.id+"','"+ft+"',this)\" style=\"cursor:pointer\">"+(fv?esc(fv):"<span style=\"color:var(--faint)\">—</span>")+"</td>";
       }
     });
-    h+="<tr><td><b>"+esc(d.type||"—")+"</b></td><td>"+esc(d.model||"—")+"</td><td>"+esc(d.sn||"—")+" <button class=\"link-btn\" onclick=\"openSnapAsset('" + a.id + "')\" title=\"扫码登记抖音账号\">📷</button></td>"+extraTds+"<td><button class=\"link-btn\" onclick=\"filterByUser(this)\" data-v=\""+a.created_by+"\">"+esc(a.created_by_name)+"</button></td><td>"+(showUser?"<b>"+esc(showUser)+"</b>":"<span style=\"color:var(--faint)\">—</span>")+"</td><td>"+phoneCardTd(a,d)+"</td><td>"+assetTag(a.status)+returnTag(d)+"</td>"+noteTd(d,a)+"<td class=\"num\">"+esc(a.created)+"</td><td>";
+    h+="<tr><td><b>"+esc(d.type||"—")+"</b></td><td>"+esc(d.model||"—")+"</td><td>"+esc(d.sn||"—")+" <button class=\"link-btn\" onclick=\"openSnapAsset('" + a.id + "')\" title=\"📷 拍照识别手机背面序号\">📷</button></td>"+extraTds+"<td><button class=\"link-btn\" onclick=\"filterByUser(this)\" data-v=\""+a.created_by+"\">"+esc(a.created_by_name)+"</button></td><td>"+(showUser?"<b>"+esc(showUser)+"</b>":"<span style=\"color:var(--faint)\">—</span>")+"</td><td>"+phoneCardTd(a,d)+"</td><td>"+assetTag(a.status)+returnTag(d)+"</td>"+noteTd(d,a)+"<td class=\"num\">"+esc(a.created)+"</td><td>";
     if(STATE.user.role!=="member")h+="<button class=\"btn btn-sm btn-ghost\" onclick=\"openEditAsset('"+a.id+"',0)\" style=\"margin-right:6px\">编辑</button> <button class=\"btn btn-sm btn-ghost\" onclick=\"showAssetHistory('"+a.id+"')\" style=\"margin-right:6px\">📜 历史</button>";
     // v13.31：主管/组长直接报修（在库/在用/外寄中可报修；维修中/报废/删除不显示）
     if(STATE.user.role!=="member"&&a.status!=="repairing"&&a.status!=="deleted"&&a.status!=="scrapped")h+="<button class=\"btn btn-sm btn-orange\" onclick=\"showRepairAsset('"+a.id+"')\" style=\"margin-right:6px\">🔧 维修</button>";
@@ -4935,7 +4944,7 @@ async function renderMyDevList(){
     }
     // v13.2：使用人仅显示实际在用者；v13.52：在库设备归属主管/组长（登记人的上级）
     var showUser=myUse?myUse.user_name:(a.status==="available"?inStockOwner(a.created_by):"");
-    h+="<tr><td>"+esc(d.type||"—")+"</td><td>"+esc(d.model||"—")+"</td><td>"+esc(d.sn||"—")+" <button class=\"link-btn\" onclick=\"openSnapAsset('" + a.id + "')\" title=\"拍照识别抖音账号\">📷</button></td>"+accTd+"<td style=\"white-space:nowrap\">"+whPlatChips(a)+"</td><td>"+phoneCardTd(a,d)+"</td><td>"+assetTag(a.status)+returnTag(d)+(showUser?"<br><span style=\"font-size:11px;color:var(--faint)\">使用人："+esc(showUser)+"</span>":"")+(myReq?"<br><span style=\"font-size:11px;color:var(--orange)\">审核中</span>":"")+"</td>"+noteTd(d,a)+"<td style=\"white-space:nowrap\">";
+    h+="<tr><td>"+esc(d.type||"—")+"</td><td>"+esc(d.model||"—")+"</td><td>"+esc(d.sn||"—")+" <button class=\"link-btn\" onclick=\"openSnapAsset('" + a.id + "')\" title=\"📷 拍照识别手机背面序号\">📷</button></td>"+accTd+"<td style=\"white-space:nowrap\">"+whPlatChips(a)+"</td><td>"+phoneCardTd(a,d)+"</td><td>"+assetTag(a.status)+returnTag(d)+(showUser?"<br><span style=\"font-size:11px;color:var(--faint)\">使用人："+esc(showUser)+"</span>":"")+(myReq?"<br><span style=\"font-size:11px;color:var(--orange)\">审核中</span>":"")+"</td>"+noteTd(d,a)+"<td style=\"white-space:nowrap\">";
     if(a.status==="in_use"){
       h+="<button class=\"btn btn-sm btn-orange\" onclick=\"reqReturn('"+a.id+"')\">退回仓库</button> ";
       h+="<button class=\"btn btn-sm btn-orange\" onclick=\"reqRepair('"+a.id+"')\">报修申请</button> ";
@@ -5093,7 +5102,7 @@ var AGNES_IDX=0, AGNES_BAD={};        // 轮询游标 + 失效key黑名单
 
 // ===== v13.61：手机端极简拍照（一键快门 · 自动识别 · 简单核对）=====
 // 打开全屏相机（手机端主入口）：进入即全屏取景，只有「拍」和「相册」两个按钮
-function openSnapAsset(assetId){SCAN_FOR_ASSET=assetId||"";openSnap("douyin");}
+function openSnapAsset(assetId){SCAN_FOR_ASSET=assetId||"";openSnap("serial");}
 function openSnap(mode){
   SCAN_MODE=mode||"sim";
   if(!document.getElementById("snapWrap")){
@@ -5196,6 +5205,8 @@ function runSnapOcr(dataUrl){
     }else{
       var txt=results.map(function(r){return r.text;}).join("\n");
       closeSnap();
+      // v13.63：手机序号 → 列出所有候选让人选
+      if(SCAN_MODE==="serial")return openSnapPick(parseSerialCandidates(txt),dataUrl,secs);
       if(SCAN_MODE==="douyin")showOcrResult(parseOcrJson(txt));
       else showAssetOcrResult(parseAssetJson(txt));
     }
@@ -5209,11 +5220,138 @@ function runSnapOcr(dataUrl){
         var uniq={},cards=[];
         nums.forEach(function(n){if(!uniq[n]){uniq[n]=1;cards.push({num:n,from:"整图"});}});
         openSimCheckin(cards,((Date.now()-t0)/1000).toFixed(1));
-      }else if(SCAN_MODE==="douyin")showOcrResult(parseOcrJson(txt));
+      }else if(SCAN_MODE==="serial")openSnapPick(parseSerialCandidates(txt),dataUrl,((Date.now()-t0)/1000).toFixed(1));
+      else if(SCAN_MODE==="douyin")showOcrResult(parseOcrJson(txt));
       else showAssetOcrResult(parseAssetJson(txt));
     }).catch(function(e2){hideSnapProgress();document.getElementById("snapTip").textContent="识别失败："+e2.message;});
   });
 }
+
+// ===== v13.63：手机序号候选选择（识别一堆文字 → 人点选一个 → 确认保存）=====
+var SNAP_CANDIDATES=[], SNAP_PICK_IDX=-1, SNAP_FOR_ASSET="";
+// 从识别文本里抽出所有"像编号"的候选
+function parseSerialCandidates(txt){
+  var raw=String(txt||"");
+  var out=[], seen={};
+  function push(v,tag){
+    v=String(v||"").trim().replace(/^["'"""'']+|["'"""'']+$/g,"").trim();
+    if(!v)return;
+    if(v.length<5||v.length>28)return;
+    if(!/[0-9A-Za-z]/.test(v))return;              // 必须含字母数字
+    if(/^[\u4e00-\u9fa5]+$/.test(v))return;        // 纯中文丢掉
+    // v13.63：纯字母英文单词丢掉（真实SN必含数字；避免 Designed/Assembled/California 混进候选）
+    if(/^[A-Za-z]+$/.test(v))return;
+    if(/^[A-Za-z\s]+$/.test(v))return;
+    // 常见英文短语黑名单
+    if(/^(designed|assembled|in china|california|apple|model|iphone|samsung|huawei|xiaomi|oppo|vivo|made|by|the)\b/i.test(v))return;
+    if(/^(IMEI|MEID|SN|S\/N|序号|序列号|串号|型号|MODEL)$/i.test(v))return;
+    var k=v.toUpperCase();
+    if(seen[k])return;
+    seen[k]=1;
+    out.push({v:v,tag:tag||""});
+  }
+  // A. 逐行拆（AI 按要求每行一个）
+  raw.split(/[\r\n]+/).forEach(function(line){
+    var L=String(line||"").trim();
+    if(!L)return;
+    // 去掉前面的标签：IMEI / IMEI1 / S/N / SN / 序列号：等
+    var stripped=L.replace(/^\s*(?:[-*•]\s*|\d{1,2}[.、)）]\s*)/,"")
+                  .replace(/^\s*(?:IMEI\s*\d?|MEID|S\s*\/\s*N|SN|序号|序列号|串号|型号|MODEL)\s*[:：=]?\s*/i,"")
+                  .trim();
+    push(stripped,"");
+    // 行里可能还有别的编号（"S/N: ABC123 IMEI: 123..."），正则兜底再抽
+    var m;
+    var re=/[A-Za-z0-9][A-Za-z0-9\-\/]{5,25}/g;
+    while((m=re.exec(L))!==null){ push(m[0],""); }
+  });
+  // B. 全文拉 IMEI（15位纯数字）
+  var im=raw.match(/\b\d{15}\b/g)||[];
+  im.forEach(function(x){ push(x,"IMEI"); });
+  // 打分排序：含字母的SN 优先（手机背面序号最常用）> IMEI 15位纯数字 > 其余
+  out.forEach(function(o){
+    var v=o.v;
+    if(/^[A-Za-z0-9]{8,20}$/.test(v)&&/[A-Za-z]/.test(v)&&/\d/.test(v)){o.tag="SN?";o.score=100;}
+    else if(/^\d{15}$/.test(v)){o.tag="IMEI";o.score=85;}
+    else if(/^[A-Za-z0-9\-]{8,20}$/.test(v)){o.tag="";o.score=60;}
+    else {o.score=30;}
+  });
+  out.sort(function(a,b){return b.score-a.score;});
+  return out;
+}
+// 候选选择界面：大按钮点选 + 手动补充 + 确定保存
+function openSnapPick(list,imgUrl,secs){
+  SNAP_CANDIDATES=list||[];
+  SNAP_PICK_IDX=-1;
+  SNAP_FOR_ASSET=SCAN_FOR_ASSET||"";
+  var a=(D.assets||[]).find(function(x){return x.id===SNAP_FOR_ASSET;});
+  var aname=a?(a.data&&(a.data.model||a.data.sn)||a.name||""):"";
+  var hh="<h3>🔢 识别结果 · 选一个</h3>";
+  hh+="<div style=\"font-size:12px;color:var(--faint);margin-bottom:10px\">"
+     +(SNAP_CANDIDATES.length?("识别到 <b style=\"color:#0369a1\">"+SNAP_CANDIDATES.length+"</b> 个可能的编号，点一下选中的那个"):"没识别到编号，可直接手填")
+     +(aname?(" · 保存到："+esc(aname)):"")
+     +(secs?(" · 耗时 "+secs+"s"):"")+"</div>";
+  if(imgUrl)hh+="<div style=\"text-align:center;margin-bottom:10px\"><img src=\""+imgUrl+"\" style=\"max-height:130px;max-width:100%;border-radius:8px;border:1px solid var(--line)\"></div>";
+  if(SNAP_CANDIDATES.length){
+    hh+="<div id=\"snapPickList\" style=\"display:flex;flex-direction:column;gap:8px;max-height:44vh;overflow:auto;margin-bottom:12px\">";
+    SNAP_CANDIDATES.forEach(function(o,i){
+      hh+="<div class=\"snap-cand\" data-i=\""+i+"\" onclick=\"snapPickSelect("+i+")\">"
+        +"<span class=\"snap-cand-txt\">"+esc(o.v)+"</span>"
+        +(o.tag?("<span class=\"snap-cand-tag\">"+o.tag+"</span>"):"")
+        +"<span class=\"snap-cand-ck\">○</span></div>";
+    });
+    hh+="</div>";
+  }
+  hh+="<div class=\"field\"><label>或者手动填写 / 修改</label><input id=\"snapPickManual\" placeholder=\"选中后可在这里微调\" oninput=\"snapPickManualEdit()\"></div>";
+  hh+="<div class=\"m-btns\"><button class=\"btn btn-ghost\" onclick=\"closeModal()\">取消</button>"
+     +"<button class=\"btn btn-primary\" id=\"snapPickOk\" onclick=\"snapPickConfirm()\">确定保存</button></div>"
+     +"<div class=\"err\" id=\"snapPickErr\"></div>";
+  showModal(hh);
+  // 默认选中第一个（最像的），但不自动保存——必须人点确定
+  if(SNAP_CANDIDATES.length)snapPickSelect(0);
+}
+function snapPickSelect(i){
+  SNAP_PICK_IDX=i;
+  var list=document.getElementById("snapPickList");if(!list)return;
+  Array.prototype.forEach.call(list.children,function(el,k){
+    var on=(k===i);
+    el.className="snap-cand"+(on?" on":"");
+    var ck=el.querySelector(".snap-cand-ck");
+    if(ck)ck.textContent=on?"●":"○";
+  });
+  var inp=document.getElementById("snapPickManual");
+  if(inp&&SNAP_CANDIDATES[i])inp.value=SNAP_CANDIDATES[i].v;
+}
+function snapPickManualEdit(){
+  // 手改后，取消列表里的高亮（表示用的是手填值）
+  var inp=document.getElementById("snapPickManual");
+  if(!inp)return;
+  var list=document.getElementById("snapPickList");
+  if(list)Array.prototype.forEach.call(list.children,function(el){
+    if(el.querySelector(".snap-cand-txt")&&el.querySelector(".snap-cand-txt").textContent===inp.value)return;
+    el.className="snap-cand";
+    var ck=el.querySelector(".snap-cand-ck");if(ck)ck.textContent="○";
+  });
+}
+async function snapPickConfirm(){
+  var inp=document.getElementById("snapPickManual");
+  var v=inp?String(inp.value||"").trim():"";
+  var err=document.getElementById("snapPickErr");
+  if(!v){if(err)err.textContent="请先选一个或手动填写";return;}
+  if(!SNAP_FOR_ASSET){if(err)err.textContent="没有指定要保存的手机";return;}
+  var btn=document.getElementById("snapPickOk");
+  if(btn){btn.disabled=true;btn.textContent="保存中…";}
+  try{
+    if(STATE.user.role==="member")await apiPost("/api/actions/edit_my_asset",{asset_id:SNAP_FOR_ASSET,data:{sn:v}});
+    else await apiPost("/api/actions/edit_asset",{asset_id:SNAP_FOR_ASSET,data:{sn:v}});
+    closeModal();
+    toast("已保存序号："+v);
+    try{ if(typeof renderAssets==="function")renderAssets(); }catch(e){}
+  }catch(e){
+    if(btn){btn.disabled=false;btn.textContent="确定保存";}
+    if(err)err.textContent="保存失败："+e.message;
+  }
+}
+
 // ===== 核对界面（手机端：大按钮、大字号、一屏搞定）=====
 function openSimCheckin(cards,secs){
   if(!cards||!cards.length){
@@ -5278,7 +5416,9 @@ var SCAN_MODE="douyin";
 var SCAN_MODES={
   douyin:{icon:"🎵",label:"抖音账号",hint:"对准抖音「个人主页」截图（能看清昵称和抖音号）",prompt:"这是一张抖音个人主页截图。请提取页面上的抖音账号信息，只输出JSON（不要markdown代码块，不要任何解释）：{\"nickname\":\"页面上的昵称\",\"douyin_id\":\"页面上的抖音号\"}。识别不到就填空字符串。"},
   sim:{icon:"📇",label:"电话卡（批量）",hint:"对准电话卡正/反面的手机号，一页多张也能一起识别",prompt:"这是一张电话卡照片。请逐张读取卡上印的手机号码（中国大陆11位，1开头）。只输出号码，每行一个，不要任何解释和其他文字。看不清的不要猜。"},
-  asset:{icon:"📱",label:"设备信息",hint:"对准手机关于本机/型号标签（SN、型号）",prompt:"这是一张手机设备信息的照片。请提取设备信息，只输出JSON（不要markdown代码块）：{\"model\":\"手机型号\",\"sn\":\"序列号SN\"}。识别不到填空字符串。"}
+  asset:{icon:"📱",label:"设备信息",hint:"对准手机关于本机/型号标签（SN、型号）",prompt:"这是一张手机设备信息的照片。请提取设备信息，只输出JSON（不要markdown代码块）：{\"model\":\"手机型号\",\"sn\":\"序列号SN\"}。识别不到填空字符串。"},
+  // v13.63：手机背面序号——只做OCR不做判断，把所有候选全列出来给人选
+  serial:{icon:"🔢",label:"手机序号",hint:"对准手机背面底部的小字（S/N 或 IMEI 那一行）",prompt:"这是一张手机背面标签的照片。请把照片上所有看起来像编号/序列号的字符串，原样抄下来。不要判断哪个是SN，不要解释，不要加任何说明文字。要求：1)每行只写一个字符串；2)包括S/N后面的值、IMEI后面的数字、MEID、型号编号，以及任何6-20位的字母数字组合；3)保留原始大小写和字符；4)看不清的宁可不要写，不要猜。"}
 };
 function showScanModal(assetId,mode){
   SCAN_FOR_ASSET=assetId||"";
