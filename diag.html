@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>账号同步诊断</title>
+<style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{margin:0;padding:14px;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;background:#f5f6fa;color:#1f2430;font-size:15px;line-height:1.55}
+h1{font-size:18px;margin:0 0 4px}
+.sub{color:#7a8194;font-size:12.5px;margin-bottom:14px}
+.card{background:#fff;border-radius:12px;padding:13px 14px;margin-bottom:12px;box-shadow:0 1px 3px rgba(20,30,60,.07)}
+.card h2{font-size:14.5px;margin:0 0 10px;display:flex;align-items:center;gap:7px}
+.badge{display:inline-block;padding:2px 9px;border-radius:20px;font-size:11.5px;font-weight:600}
+.ok{background:#e5f8ec;color:#0d7a3c}
+.bad{background:#fdeaea;color:#b3261e}
+.warn{background:#fff4e0;color:#9a6300}
+.wait{background:#eef0f5;color:#6b7280}
+.row{display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px dashed #eceef4;font-size:13.5px}
+.row:last-child{border-bottom:none}
+.row .k{color:#7a8194;flex:0 0 auto}
+.row .v{text-align:right;word-break:break-all;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px}
+.u{display:flex;align-items:center;justify-content:space-between;padding:8px 10px;border-radius:8px;background:#f8f9fc;margin-bottom:6px;font-size:13.5px}
+.u .nm{font-weight:600}
+.u .meta{color:#7a8194;font-size:12px}
+.tag{font-size:11px;padding:1px 7px;border-radius:6px;margin-left:6px}
+.t-sup{background:#ede9ff;color:#5b3fd1}
+.t-lea{background:#e3f1ff;color:#1a6bbd}
+.t-mem{background:#eaf7ea;color:#2f7a33}
+.t-none{background:#fdeaea;color:#b3261e}
+.empty{color:#9aa1b2;font-size:13px;padding:8px 0}
+.verdict{font-size:14px;line-height:1.7}
+.verdict b{color:#b3261e}
+.verdict .go{color:#0d7a3c;font-weight:600}
+button{width:100%;padding:12px;border:none;border-radius:10px;background:#5b6cff;color:#fff;font-size:15px;font-weight:600;margin-top:6px}
+button:active{opacity:.8}
+button.ghost{background:#eef0f5;color:#3b4252}
+.hint{font-size:12px;color:#9aa1b2;margin-top:8px;line-height:1.6}
+.pwd{color:#b3261e;font-family:ui-monospace,Menlo,Consolas,monospace}
+</style>
+</head>
+<body>
+<h1>账号同步诊断</h1>
+<div class="sub">对比「云端」和「这台设备本地」各存了哪些账号</div>
+
+<div class="card">
+  <h2>① 云端连接 <span id="cBadge" class="badge wait">检测中…</span></h2>
+  <div class="row"><span class="k">地址</span><span class="v" id="cUrl">—</span></div>
+  <div class="row"><span class="k">耗时</span><span class="v" id="cTime">—</span></div>
+  <div class="row"><span class="k">结果</span><span class="v" id="cMsg">—</span></div>
+</div>
+
+<div class="card">
+  <h2>② 云端账号 <span id="cuCnt" class="badge wait">—</span></h2>
+  <div id="cloudUsers"><div class="empty">读取中…</div></div>
+</div>
+
+<div class="card">
+  <h2>③ 本机账号 <span id="luCnt" class="badge wait">—</span></h2>
+  <div id="localUsers"><div class="empty">读取中…</div></div>
+</div>
+
+<div class="card">
+  <h2>④ 结论</h2>
+  <div class="verdict" id="verdict">分析中…</div>
+</div>
+
+<div class="card">
+  <h2>操作</h2>
+  <button onclick="location.reload()">重新检测</button>
+  <button class="ghost" id="btnPush" style="display:none" onclick="pushLocal()">把本机账号推到云端</button>
+  <div class="hint">※ 密码只显示前 2 位和后 2 位，用于核对；完整密码不显示。</div>
+</div>
+
+<script>
+var CLOUD_URL = "https://hfafiokmdampruoenkgt.supabase.co";
+var CLOUD_KEY = "sb_publishable_shABnm73cIBqH3mAvwe9pA_W40JPiae";
+var cloudUsers = null, localUsers = null, cloudErr = null;
+
+function mask(p){
+  p = String(p == null ? "" : p);
+  if(!p) return "（空）";
+  if(p.length <= 4) return p[0] + "**";
+  return p.slice(0,2) + "****" + p.slice(-2) + "（" + p.length + "位）";
+}
+function roleTag(r){
+  if(r === "supervisor") return '<span class="tag t-sup">主管</span>';
+  if(r === "leader") return '<span class="tag t-lea">组长</span>';
+  return '<span class="tag t-mem">员工</span>';
+}
+function setBadge(id, cls, txt){
+  var e = document.getElementById(id);
+  e.className = "badge " + cls;
+  e.textContent = txt;
+}
+function renderUsers(boxId, cntId, list, otherNames){
+  var box = document.getElementById(boxId);
+  if(!list || !list.length){ box.innerHTML = '<div class="empty">（0 个账号）</div>'; setBadge(cntId,"bad","0 个"); return; }
+  setBadge(cntId,"ok",list.length + " 个");
+  var h = "";
+  list.forEach(function(u){
+    var missing = otherNames && !otherNames[u.username];
+    h += '<div class="u" style="' + (missing ? "outline:2px solid #f7c9c9;background:#fff8f8" : "") + '">'
+      +  '<div><div class="nm">' + (u.name || "—") + roleTag(u.role) + (missing ? '<span class="tag t-none">对方没有</span>' : '') + '</div>'
+      +  '<div class="meta">账号：' + (u.username || "—") + '</div></div>'
+      +  '<div class="meta">密码 <span class="pwd">' + mask(u.password) + '</span></div>'
+      +  '</div>';
+  });
+  box.innerHTML = h;
+}
+function mapByName(list){
+  var m = {};
+  (list || []).forEach(function(u){ m[u.username] = 1; });
+  return m;
+}
+
+async function run(){
+  document.getElementById("cUrl").textContent = CLOUD_URL.replace("https://","").slice(0,34);
+
+  // 本地
+  var localDB = null;
+  try {
+    localDB = JSON.parse(localStorage.getItem("device_db_v2") || "null");
+  } catch(e){}
+  localUsers = (localDB && localDB.users) ? localDB.users : [];
+
+  // 云端
+  var t0 = Date.now();
+  try {
+    var ctrl = new AbortController();
+    var timer = setTimeout(function(){ ctrl.abort(); }, 15000);
+    var res = await fetch(CLOUD_URL + "/rest/v1/app_data?id=eq.1&select=data", {
+      headers: { apikey: CLOUD_KEY, Authorization: "Bearer " + CLOUD_KEY },
+      signal: ctrl.signal
+    });
+    clearTimeout(timer);
+    var ms = Date.now() - t0;
+    document.getElementById("cTime").textContent = ms + " ms";
+    if(!res.ok){
+      cloudErr = "HTTP " + res.status;
+      setBadge("cBadge","bad","连接失败");
+      document.getElementById("cMsg").textContent = "HTTP " + res.status + " " + (await res.text()).slice(0,60);
+    } else {
+      var rows = await res.json();
+      if(rows && rows.length && rows[0].data){
+        cloudUsers = rows[0].data.users || [];
+      } else {
+        cloudUsers = [];
+      }
+      setBadge("cBadge","ok","正常");
+      document.getElementById("cMsg").textContent = "读取成功，返回 " + (cloudUsers.length) + " 个账号";
+      if(localDB && localDB.assets) {
+        var ca = (rows[0].data.assets || []).length;
+        document.getElementById("cMsg").textContent += "；云端设备 " + ca + " 台，本机设备 " + localDB.assets.length + " 台";
+      }
+    }
+  } catch(e){
+    var ms = Date.now() - t0;
+    cloudErr = (e && e.name === "AbortError") ? "超时 15 秒" : String(e.message || e);
+    document.getElementById("cTime").textContent = ms + " ms";
+    setBadge("cBadge","bad","连不上");
+    document.getElementById("cMsg").textContent = cloudErr;
+  }
+
+  renderUsers("cloudUsers","cuCnt", cloudUsers, mapByName(localUsers));
+  renderUsers("localUsers","luCnt", localUsers, mapByName(cloudUsers));
+
+  // 结论
+  var v = document.getElementById("verdict");
+  if(cloudErr){
+    v.innerHTML = '这台设备<b>连不上云端</b>（' + cloudErr + '）。<br>'
+      + '意味着：在这台设备上看到的账号，只有它自己本地存的那几个。<br>'
+      + '<span class="go">↳ 换网络（切 4G/5G 或换个 WiFi）再打开本页重测。</span>';
+    if(localUsers.length){
+      document.getElementById("btnPush").style.display = "block";
+    }
+    return;
+  }
+
+  var localOnly = (localUsers||[]).filter(function(u){ return !mapByName(cloudUsers)[u.username]; });
+  var cloudOnly = (cloudUsers||[]).filter(function(u){ return !mapByName(localUsers)[u.username]; });
+
+  if(!localUsers || !localUsers.length){
+    v.innerHTML = '本机<b>没有任何账号</b>，但云端有 ' + cloudUsers.length + ' 个。<br>'
+      + '说明这台设备还没同步下来 —— 刷新页面（下拉重载）后再试。';
+  } else if(localOnly.length){
+    v.innerHTML = '发现 <b>' + localOnly.length + ' 个账号只在本机、云端没有</b>：'
+      + localOnly.map(function(u){ return '<br>· ' + (u.name||"") + '（' + u.username + '）'; }).join("")
+      + '<br><br><span class="go">↳ 这就是员工登不上的原因：账号没传上去。</span>'
+      + '<br>点下方「把本机账号推到云端」即可修复。';
+    document.getElementById("btnPush").style.display = "block";
+  } else if(cloudOnly.length){
+    v.innerHTML = '云端比本机多 ' + cloudOnly.length + ' 个账号，本机没同步到：'
+      + cloudOnly.map(function(u){ return '<br>· ' + (u.name||"") + '（' + u.username + '）'; }).join("")
+      + '<br><br><span class="go">↳ 在这台设备刷新页面即可拉到。</span>';
+  } else {
+    v.innerHTML = '<span class="go">✔ 云端和本机账号完全一致（各 ' + cloudUsers.length + ' 个）。</span><br><br>'
+      + '账号同步没问题。那员工登不上，可能是：<br>'
+      + '· 账号或密码输错（注意大小写、前后空格、中文输入法全角）<br>'
+      + '· 员工手机上的页面是旧版，刷新一下<br>'
+      + '· 员工手机连不上云端（让他在手机上打开本页看第 ① 项）';
+  }
+}
+
+async function pushLocal(){
+  var ok = confirm("将把【本机】的账号列表合并到云端（云端已有的账号不会被删除）。确定？");
+  if(!ok) return;
+  var btn = document.getElementById("btnPush");
+  btn.disabled = true; btn.textContent = "推送中…";
+  try {
+    var res = await fetch(CLOUD_URL + "/rest/v1/app_data?id=eq.1&select=data", {
+      headers: { apikey: CLOUD_KEY, Authorization: "Bearer " + CLOUD_KEY }
+    });
+    var rows = await res.json();
+    var remote = (rows && rows.length && rows[0].data) ? rows[0].data : {};
+    var rUsers = remote.users || [];
+    var names = mapByName(rUsers);
+    var added = 0;
+    localUsers.forEach(function(u){
+      if(!names[u.username]){ rUsers.push(u); names[u.username] = 1; added++; }
+    });
+    remote.users = rUsers;
+    var put = await fetch(CLOUD_URL + "/rest/v1/app_data?id=eq.1", {
+      method: "PATCH",
+      headers: { apikey: CLOUD_KEY, Authorization: "Bearer " + CLOUD_KEY, "Content-Type": "application/json" },
+      body: JSON.stringify({ data: remote, updated_at: new Date().toISOString() })
+    });
+    if(put.ok){
+      alert("推送成功，新增 " + added + " 个账号到云端。让员工刷新页面再登录。");
+      location.reload();
+    } else {
+      alert("推送失败：HTTP " + put.status);
+      btn.disabled = false; btn.textContent = "把本机账号推到云端";
+    }
+  } catch(e){
+    alert("推送失败：" + e.message);
+    btn.disabled = false; btn.textContent = "把本机账号推到云端";
+  }
+}
+
+run();
+</script>
+</body>
+</html>
