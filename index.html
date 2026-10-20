@@ -2772,11 +2772,67 @@ async function doInlineSave(assetId, fieldId, value){
   else if(CURRENT_PAGE==="assets")renderAssetTable();
   else if(CURRENT_PAGE==="mydev")renderMyDevList();
 }
-function showAddAsset(){
-  showModal("<h3>登记设备</h3><div id=\"assetForm\"></div>"
+// v13.65：登记设备弹窗——顶部可拍照识别手机背面信息
+function assetFormInnerHtml(){
+  return "<h3>登记设备</h3>"
+    +"<div style=\"margin-bottom:6px\"><button class=\"btn\" style=\"width:100%;background:#7c5cff;color:#fff;border-color:#7c5cff;font-weight:600\" onclick=\"openSnapNewAsset()\">📷 拍照识别手机背面信息</button></div>"
+    +"<div style=\"font-size:12px;color:var(--faint);margin-bottom:12px\">拍照读出背面的编号，点一个填进「手机编号」；手机型号自己选</div>"
+    +"<div id=\"assetForm\"></div>"
     +"<div class=\"m-btns\"><button class=\"btn btn-ghost\" onclick=\"cancelAddAsset()\">取消</button><button class=\"btn btn-primary\" onclick=\"addAsset()\">登记</button><button class=\"btn btn-green\" onclick=\"addAsset('next')\">登记并下一条</button></div>"
-    +"<div style=\"font-size:12px;color:var(--faint);margin-top:4px\">「登记并下一条」= 保存后保留当前填写内容，只需改手机编号即可连续录相同型号</div><div class=\"err\" id=\"a_err\"></div>");
-  renderAssetForm();
+    +"<div style=\"font-size:12px;color:var(--faint);margin-top:4px\">「登记并下一条」= 保存后保留当前填写内容，只需改手机编号即可连续录相同型号</div><div class=\"err\" id=\"a_err\"></div>";
+}
+async function showAddAsset(){
+  SNAP_TARGET="asset";NEW_ASSET_DRAFT=null;
+  showModal(assetFormInnerHtml());
+  await renderAssetForm();
+}
+// 拍照会替换弹窗内容，先把已填的表单值存下来，识别完再还原
+function captureAssetFormState(){
+  var box=document.getElementById("assetForm");
+  if(!box)return null;
+  var st={};
+  Array.prototype.forEach.call(box.querySelectorAll("[id^='f_']"),function(el){
+    if(el.classList&&el.classList.contains("chip-row")){
+      var c=el.querySelector(".chip.on");
+      st[el.id]=c?c.getAttribute("data-v"):"";
+    }else{ st[el.id]=el.value||""; }
+  });
+  return st;
+}
+function restoreAssetFormState(st){
+  if(!st)return;
+  Object.keys(st).forEach(function(k){
+    var el=document.getElementById(k); if(!el)return;
+    if(el.classList&&el.classList.contains("chip-row")){
+      Array.prototype.forEach.call(el.children,function(c){ c.classList.toggle("on", c.getAttribute("data-v")===st[k]); });
+    }else{ el.value=st[k]; }
+  });
+}
+// 从登记表单点「拍照识别」
+function openSnapNewAsset(){
+  NEW_ASSET_DRAFT=captureAssetFormState();
+  SNAP_TARGET="new";
+  SCAN_FOR_ASSET="";
+  openSnap("serial");
+}
+// 识别完/取消后，重建登记表单并还原草稿，把识别值填进「手机编号」
+async function reopenNewAssetForm(snVal){
+  SNAP_TARGET="asset";
+  showModal(assetFormInnerHtml());
+  await renderAssetForm();
+  restoreAssetFormState(NEW_ASSET_DRAFT);
+  if(snVal){
+    var snId=findFieldId("手机编号");
+    var el=snId?document.getElementById("f_"+snId):null;
+    if(el){
+      el.value=snVal; el.focus();
+      try{ el.setSelectionRange(el.value.length,el.value.length); }catch(e){}
+      toast("已填入手机编号："+snVal);
+    }else{
+      toast("已识别："+snVal+"（没找到「手机编号」字段，请手动填）","err");
+    }
+  }
+  var e2=document.getElementById("a_err"); if(e2)e2.textContent="";
 }
 function cancelAddAsset(){closeModal();if(STATE.user.role==="member"){renderMyDevList();}else{renderAssetTable();}}
 async function renderAssetForm(){
@@ -5118,6 +5174,8 @@ async function shipReturn(assetId){
 }
 // ===== v13.61：视觉识别引擎（Agnes 196-key 池，多key轮询+并行分片） =====
 var SCAN_STREAM=null,SCAN_FOR_ASSET="";
+// v13.65：拍照识别目标——"asset"=保存到已有设备 / "new"=填进登记设备表单
+var SNAP_TARGET="asset", NEW_ASSET_DRAFT=null;
 // v13.61：Agnes 视觉模型 key 池（196个，免费额度）+ 多key轮询 + 并行分片加速
 var AGNES_POOL_RAW=[
 "HksfGeL3RSzVr2JsQICwKnAPwY9SriRzwDEI5GG78xLC0VgU|XcXxkgnVWrdwjkAAHus9za06qlOH58euWgXrfbByqIBdlV6E|ae5OWBI7T7IKm9ihvOjle9mvQUqEN6WtWdwMFJJKDvM4jLyE|jhUc8PZrg7M0q18sNclbVVGxM81JUIsgYasQLO9BVyhWeJaI|7wCrlKoubZECFfHm9h5TJdmIw4yR6PbTPWQeGwy49nDknAQd|MkfEMxcUPYtSHc9e0rakPbDeCO6Z0RWQsZd1qj8B7LgRZ1Ga|ba6GYiOm8SyWSvYT8S8ye4SizPOywG7TFO6OKGn3m2m8RkHm|z4SjKB4obCidQBpg2dhGygDFSSPdXzLOzRXzHp4Y8he8LoKb|2YpchHoaxuPqIEU95vfvK8j2D5h4bDskRB8fR2hYRZe6vFoB|pZV3WKhM01WSlZp5GRojuJHwBf7jFL38czHSarEZHxsyjUGG|MLgjOP1OxVHeEEmw3L0KeEsEcQ7sl1gcYRJLIVPjqlrUQmhf|skLvAq7jTYXbf3kudXKduT1H5I3vnnnhz0vpkitw4THMmNd1|E9ogtpiX0U52",
@@ -5147,7 +5205,7 @@ var AGNES_IDX=0, AGNES_BAD={};        // 轮询游标 + 失效key黑名单
 
 // ===== v13.61：手机端极简拍照（一键快门 · 自动识别 · 简单核对）=====
 // 打开全屏相机（手机端主入口）：进入即全屏取景，只有「拍」和「相册」两个按钮
-function openSnapAsset(assetId){SCAN_FOR_ASSET=assetId||"";openSnap("serial");}
+function openSnapAsset(assetId){SNAP_TARGET="asset";SCAN_FOR_ASSET=assetId||"";openSnap("serial");}
 function openSnap(mode){
   SCAN_MODE=mode||"sim";
   if(!document.getElementById("snapWrap")){
@@ -5328,12 +5386,13 @@ function openSnapPick(list,imgUrl,secs){
   SNAP_CANDIDATES=list||[];
   SNAP_PICK_IDX=-1;
   SNAP_FOR_ASSET=SCAN_FOR_ASSET||"";
-  var a=(D.assets||[]).find(function(x){return x.id===SNAP_FOR_ASSET;});
-  var aname=a?(a.data&&(a.data.model||a.data.sn)||a.name||""):"";
+  var isNew=(SNAP_TARGET==="new");
+  var a=isNew?null:(D.assets||[]).find(function(x){return x.id===SNAP_FOR_ASSET;});
+  var aname=isNew?"登记设备表单":(a?(a.data&&(a.data.model||a.data.sn)||a.name||""):"");
   var hh="<h3>🔢 识别结果 · 选一个</h3>";
   hh+="<div style=\"font-size:12px;color:var(--faint);margin-bottom:10px\">"
      +(SNAP_CANDIDATES.length?("识别到 <b style=\"color:#0369a1\">"+SNAP_CANDIDATES.length+"</b> 个可能的编号，点一下选中的那个"):"没识别到编号，可直接手填")
-     +(aname?(" · 保存到："+esc(aname)):"")
+     +(aname?(isNew?(" · 将填入："+esc(aname)):(" · 保存到："+esc(aname))):"")
      +(secs?(" · 耗时 "+secs+"s"):"")+"</div>";
   if(imgUrl)hh+="<div style=\"text-align:center;margin-bottom:10px\"><img src=\""+imgUrl+"\" style=\"max-height:130px;max-width:100%;border-radius:8px;border:1px solid var(--line)\"></div>";
   if(SNAP_CANDIDATES.length){
@@ -5347,12 +5406,17 @@ function openSnapPick(list,imgUrl,secs){
     hh+="</div>";
   }
   hh+="<div class=\"field\"><label>或者手动填写 / 修改</label><input id=\"snapPickManual\" placeholder=\"选中后可在这里微调\" oninput=\"snapPickManualEdit()\"></div>";
-  hh+="<div class=\"m-btns\"><button class=\"btn btn-ghost\" onclick=\"closeModal()\">取消</button>"
-     +"<button class=\"btn btn-primary\" id=\"snapPickOk\" onclick=\"snapPickConfirm()\">确定保存</button></div>"
+  hh+="<div class=\"m-btns\"><button class=\"btn btn-ghost\" onclick=\"snapPickCancel()\">取消</button>"
+     +"<button class=\"btn btn-primary\" id=\"snapPickOk\" onclick=\"snapPickConfirm()\">"+(isNew?"填入表单":"确定保存")+"</button></div>"
      +"<div class=\"err\" id=\"snapPickErr\"></div>";
   showModal(hh);
   // 默认选中第一个（最像的），但不自动保存——必须人点确定
   if(SNAP_CANDIDATES.length)snapPickSelect(0);
+}
+// v13.65：候选界面点"取消"——登记模式下要把表单还原回去，不能把已填内容丢掉
+function snapPickCancel(){
+  if(SNAP_TARGET==="new"){reopenNewAssetForm("");return;}
+  closeModal();
 }
 function snapPickSelect(i){
   SNAP_PICK_IDX=i;
@@ -5382,6 +5446,8 @@ async function snapPickConfirm(){
   var v=inp?String(inp.value||"").trim():"";
   var err=document.getElementById("snapPickErr");
   if(!v){if(err)err.textContent="请先选一个或手动填写";return;}
+  // v13.65：登记新设备——只填表单，不保存到已有设备
+  if(SNAP_TARGET==="new"){await reopenNewAssetForm(v);return;}
   if(!SNAP_FOR_ASSET){if(err)err.textContent="没有指定要保存的手机";return;}
   var btn=document.getElementById("snapPickOk");
   if(btn){btn.disabled=true;btn.textContent="保存中…";}
