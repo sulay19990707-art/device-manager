@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>微亿来 · 设备运营工作台</title><meta name="desk-release" content="2026-10-22-r2">
+<title>微亿来 · 设备运营工作台</title><meta name="desk-release" content="2026-10-22-r3">
 <style>
 :root{
   --bg:#eef1f5;--card:#fff;--ink:#1d1d1f;--sub:#6e6e73;--faint:#9aa0a6;
@@ -6409,7 +6409,7 @@ const oldRoute=route,oldNav=navTo;
 const json=(status,body)=>({ok:status<400,status,json:async()=>body});
 function safeUser(u){const {password,password_hash,...r}=u;return r;}
 function principal(){const token=getToken();if(!token)return null;try{const id=JSON.parse(uatob(token.split('.')[0])).id;return raw.users.find(x=>x.id===id&&x.active!==false)||null;}catch(_){return null;}}
-function publicState(){const u=principal();if(!u)throw Object.assign(Error('请登录系统'),{status:401});current=u;return {user:safeUser(u),data:B.visible(raw,u),version:version||'local',connection:{online,dirty},agent:null};}
+function publicState(){const u=principal();if(!u)throw Object.assign(Error('请登录系统'),{status:401});current=u;return {user:safeUser(u),data:B.visible(raw,u),version:version||'local',connection:{online,dirty},agent:raw.print_agent||null};}
 function persist(){localStorage.setItem(LEGACY_KEY,JSON.stringify(raw));}
 async function read(force=false){if(!force&&ready&&Date.now()-lastRead<8000)return;lastRead=Date.now();try{const r=await nativeFetch(CLOUD_URL+'/rest/v1/app_data?id=eq.1',{headers:{apikey:CLOUD_KEY,Authorization:'Bearer '+CLOUD_KEY},signal:AbortSignal.timeout(6500)});if(!r.ok)throw Error('HTTP '+r.status);const rows=await r.json();if(!rows[0]||!rows[0].data)throw Error('云端数据为空，保留本机数据');online=true;if(dirty){if(version!==rows[0].updated_at)online=false;}else{version=rows[0].updated_at;raw=hydrate(rows[0].data);persist();}}catch(_){online=false;}ready=true;if(window.Desk&&STATE.user&&CURRENT_PAGE==='desk'&&document.getElementById('modalMask')?.style.display==='none'&&!['INPUT','SELECT','TEXTAREA'].includes(document.activeElement?.tagName)){syncView();Desk.render();}}
 async function write(next){
@@ -6428,7 +6428,7 @@ async function checkPassword(p,u){if(u.password_hash&&u.password_hash.startsWith
 function syncView(){const u=principal();if(u){current=u;STATE.user=safeUser(u);D=B.visible(raw,u);}}
 
 function mergeRecords(base,local,remote){const out=structuredClone(remote),conflicts=[];for(const key of new Set([...Object.keys(base),...Object.keys(local)])){const a=base[key],b=local[key],c=remote[key];if(JSON.stringify(a)===JSON.stringify(b))continue;if(Array.isArray(a)&&Array.isArray(b)&&a.every(x=>x&&x.id)&&b.every(x=>x&&x.id)){const oldMap=new Map(a.map(x=>[x.id,x])),newMap=new Map(b.map(x=>[x.id,x])),remoteList=Array.isArray(c)?c:[],rMap=new Map(remoteList.map(x=>[x.id,x]));for(const id of new Set([...oldMap.keys(),...newMap.keys()])){const old=oldMap.get(id),next=newMap.get(id),other=rMap.get(id);if(JSON.stringify(old)===JSON.stringify(next))continue;if(JSON.stringify(other)!==JSON.stringify(old)&&JSON.stringify(other)!==JSON.stringify(next)){conflicts.push(key);continue;}if(next)rMap.set(id,next);else rMap.delete(id);}out[key]=[...rMap.values()];}else if(JSON.stringify(c)===JSON.stringify(a)||JSON.stringify(c)===JSON.stringify(b)){out[key]=structuredClone(b);}else conflicts.push(key);}if(conflicts.length)throw Error('本机与云端的 '+[...new Set(conflicts)].join('、')+' 有同时修改，已保留双方数据，请先导出本机备份再核对。');return out;}
-async function syncPending(){return serial(async()=>{if(!dirty){await read(true);return publicState();}if(!pendingBase)throw Error('本机待同步记录缺少原始版本，请先导出备份后核对。');const r=await nativeFetch(CLOUD_URL+'/rest/v1/app_data?id=eq.1',{headers:{apikey:CLOUD_KEY,Authorization:'Bearer '+CLOUD_KEY},signal:AbortSignal.timeout(10000)});if(!r.ok)throw Error('云端尚未连接');const rows=await r.json();if(!rows[0]?.data)throw Error('云端数据异常，未覆盖');const merged=mergeRecords(pendingBase,raw,rows[0].data);version=rows[0].updated_at;online=true;dirty=false;try{await write(merged);pendingBase=null;localStorage.removeItem('desk_live_pending_v1');syncView();return publicState();}catch(e){dirty=true;throw e;}});}
+async function syncPending(){return serial(async()=>{if(!dirty){await read(true);return publicState();}if(!pendingBase)throw Error('本机待同步记录缺少原始版本，请先导出备份后核对。');const r=await nativeFetch(CLOUD_URL+'/rest/v1/app_data?id=eq.1',{headers:{apikey:CLOUD_KEY,Authorization:'Bearer '+CLOUD_KEY},signal:AbortSignal.timeout(10000)});if(!r.ok)throw Error('云端尚未连接');const rows=await r.json();if(!rows[0]?.data)throw Error('云端数据异常，未覆盖');const merged=mergeRecords(pendingBase,raw,hydrate(rows[0].data));version=rows[0].updated_at;online=true;dirty=false;try{await write(merged);pendingBase=null;localStorage.removeItem('desk_live_pending_v1');syncView();return publicState();}catch(e){dirty=true;throw e;}});}
 
 async function endpoint(ep,p){
   if(ep==='login'){if(!ready&&!hasLocal)await read(true);else if(!ready){ready=true;read(true).catch(()=>{});}if(!hasLocal&&!online)throw Error('云端未连接，且本机没有原系统数据。请先从原设备导出备份，不要新建覆盖。');const u=raw.users.find(x=>String(x.username).trim().toLowerCase()===String(p.username||'').trim().toLowerCase()&&x.active!==false);if(!u||!await checkPassword(String(p.password||''),u))throw Object.assign(Error('账号或密码错误，或账号已停用'),{status:401});setToken(ubtoa(JSON.stringify({id:u.id}))+'.'+ubtoa('s1'));current=u;return {user:safeUser(u)};}
