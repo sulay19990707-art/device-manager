@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>微亿来 · 设备运营工作台</title><meta name="desk-release" content="2026-10-24-r16">
+<title>微亿来 · 设备运营工作台</title><meta name="desk-release" content="2026-10-26-r17">
 <style>
 :root{
   --bg:#eef1f5;--card:#fff;--ink:#1d1d1f;--sub:#6e6e73;--faint:#9aa0a6;
@@ -6256,6 +6256,7 @@ function sliceImage(data,rows,cols,overlap){return new Promise((resolve,reject)=
 (function(root){
   'use strict';
   function id(){return typeof crypto!=='undefined'&&crypto.randomUUID?crypto.randomUUID():'r'+Date.now().toString(36)+Math.random().toString(36).slice(2);}
+  function labelCardType(data){const type=String(data.card_type||'电话卡'),flow=['10G','80G'].includes(data.flow_plan)?data.flow_plan:'';if(!flow)return type;return /\b(?:10|80)\s*GB?\b/i.test(type)?type.replace(/\b(?:10|80)\s*GB?\b/gi,flow):type+' '+flow;}
   function time(){return new Date().toISOString();}
   function assert(ok,message){if(!ok)throw Error(message);}
   function init(d){for(const k of ['assets','simcards','users','uses','logs','handoffs','printjobs','accounts','requests','repairs','shipments','notices','fields','card_batches','card_photos','phone_batches'])if(!Array.isArray(d[k]))d[k]=[];return d;}
@@ -6530,7 +6531,7 @@ printed_code:String(p.printed_code===undefined?s.data.printed_code||'':p.printed
     }
     if(kind==='print_create'){
       const ids=p.sim_ids||[];assert(ids.length&&ids.length<=100,'每次打印1到100张');assert(new Set(ids).size===ids.length,'重复选择');
-      const labels=ids.map(sid=>{const s=d.simcards.find(x=>x.id===sid);assert(s&&simAccess(d,u,s),'无权打印该卡');assert(['在用','保管中'].includes(s.data.sim_status),'仅打印当前保管或在用电话卡，异常卡请先处理');assert(/^1\d{10}$/.test(s.data.sim_no||''),'请先核实手机号再打印信息标签');const a=d.assets.find(x=>x.id===s.asset_id),owner=d.users.find(x=>x.id===s.user_id);assert(owner,'请先登记卡的责任人');return {sim_id:s.id,phone:s.data.sim_no,name:owner.name,operator:s.data.sim_type||'',card_type:s.data.card_type||'电话卡',asset:a?a.data.sn:'未装机',slot:s.data.phone_slot||'',assigned_at:s.assigned_at||s.created,label_date:new Date().toLocaleDateString('sv-SE',{timeZone:'Asia/Shanghai'})};});
+      const labels=ids.map(sid=>{const s=d.simcards.find(x=>x.id===sid);assert(s&&simAccess(d,u,s),'无权打印该卡');assert(['在用','保管中'].includes(s.data.sim_status),'仅打印当前保管或在用电话卡，异常卡请先处理');assert(/^1\d{10}$/.test(s.data.sim_no||''),'请先核实手机号再打印信息标签');const a=d.assets.find(x=>x.id===s.asset_id),owner=d.users.find(x=>x.id===s.user_id);assert(owner,'请先登记卡的责任人');return {sim_id:s.id,phone:s.data.sim_no,name:owner.name,operator:s.data.sim_type||'',card_type:labelCardType(s.data),flow_plan:s.data.flow_plan||'',asset:a?a.data.sn:'未装机',slot:s.data.phone_slot||'',assigned_at:s.assigned_at||s.created,label_date:new Date().toLocaleDateString('sv-SE',{timeZone:'Asia/Shanghai'})};});
       const j={id:id(),status:'queued',labels,created:time(),created_by:u.id,created_by_name:u.name};d.printjobs.push(j);log(d,u,'','打印排队',labels.length+' 张标签');return {job_id:j.id};
     }
     if(kind==='print_cancel'){const j=d.printjobs.find(x=>x.id===p.id);assert(j&&j.status==='queued','只能取消尚未被打印机接收的任务');assert(j.created_by===u.id||u.role==='supervisor','无权取消');j.status='cancelled';return {};}
@@ -6545,7 +6546,7 @@ printed_code:String(p.printed_code===undefined?s.data.printed_code||'':p.printed
     d.logs=u.role==='member'?[]:d.logs.filter(x=>aids.has(x.asset_id)||x.user_id===u.id||raw.simcards.some(s=>s.id===x.sim_id&&simAccess(raw,u,s)));d.handoffs=d.handoffs.filter(x=>scope(raw,u,x.from_id)||x.to_id===u.id);d.printjobs=d.printjobs.filter(x=>scope(raw,u,x.created_by));
     d.requests=d.requests.filter(x=>scope(raw,u,x.user_id)||x.type==='sim_transfer'&&x.from_id===u.id||x.type==='sim_claim'&&raw.simcards.find(s=>s.id===x.sim_id)?.user_id===u.id);d.repairs=d.repairs.filter(x=>aids.has(x.asset_id));d.shipments=d.shipments.filter(x=>aids.has(x.asset_id));d.checkins=(d.checkins||[]).filter(x=>scope(raw,u,x.user_id));d.notices=d.notices.filter(x=>!x.target||x.target==='all'||x.target==='user:'+u.id||x.target==='leader:'+u.parent_id||x.target==='leader:'+u.id);d.transfers=(d.transfers||[]).filter(x=>scope(raw,u,x.from_id)||x.to_id===u.id);return d;
   }
-  const api={apply,init,identityReady,normalizeFace,code,use,scope,access,warehouseAccess,simAccess,visible,id};if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.DeskBusiness=api;
+  const api={labelCardType,apply,init,identityReady,normalizeFace,code,use,scope,access,warehouseAccess,simAccess,visible,id};if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.DeskBusiness=api;
 })(typeof window!=='undefined'?window:globalThis);
 
 </script>
@@ -6737,7 +6738,7 @@ function simExceptionForm(id){const s=D.simcards.find(x=>x.id===id);modal('电�
 function simReturnForm(id){modal('退卡给主管','<div class="desk-note">核对实体卡标签，主管实际收到后再点收。无需填写盒号、格位。</div>','确认收到并入库','saveSimReturn',id);}
 function assignForm(id){modal('分配手机',`<div class="desk-form">${field('接收员工',`<select id="fAssign">${options(people())}</select>`,true)}</div>`,'已当面交给员工','saveAssign',id);}
 function printPage(){const list=D.printjobs.slice().reverse(),online=S.agent&&Date.now()-new Date(S.agent.last_seen)<90000;layout(header('打印中心','标签 50 × 30 mm · 姓名取自电话卡责任人 · 多张一次提交',btn('选择电话卡打印','nav','sims',true))+`<div class="desk-note ${online?'':'warn'}">${demo?'演示环境不出纸。正式使用时，员工点打印后由管理电脑自动接单。':online?(S.agent.state==='error'?'打印助手在线 · 请处理打印异常：'+E(S.agent.message||'检查打印机'):S.agent.state==='printing'?'打印电脑正在处理任务':'打印电脑常驻待命 · 自动接单 · '+E(S.agent.printer||'DP23')):'打印助手未连接。任务可排队，电脑连接后自动处理；请勿把排队当成已出纸。'}</div>`+list.map(j=>`<section class="desk-panel"><div class="desk-row"><div><strong>${E(j.created_by_name)} · ${j.labels.length} 张标签</strong><div class="desk-sub">${stamp(j.created)} · ${E(j.labels.map(x=>x.kind==='batch'?x.batch_title+' · '+x.batch_date+' · '+x.quantity+'张卡':x.phone).join('、'))}</div>${j.error?`<div class="desk-error">${E(j.error)}</div>`:''}</div><div class="desk-actions">${tag({queued:'等待助手接单',printing:'正在发送打印机',submitted:'已提交系统打印队列',uncertain:'出纸结果待核实',failed:'失败',cancelled:'已取消'}[j.status]||j.status,j.status==='failed'||j.status==='uncertain'?'red':j.status==='queued'?'warn':'gray')}${j.status==='queued'?btn('取消','cancelPrint',j.id):''}${btn('查看标签','viewJob',j.id)}</div></div></section>`).join('')+(list.length?'':empty('还没有打印任务。到电话卡页面勾选，一次打印多张。')));}
-function previewLabel(l){if(l.kind==='batch')return `<div class="desk-preview"><h2>${E(l.batch_title)}</h2><p>领卡日期：${E(l.batch_date)}</p><h2>${E(l.quantity)} 张卡</h2><p>${E(l.operator)}</p></div>`;return `<div class="desk-preview"><div class="number">${E(l.phone)}</div><div class="owner">${E(l.name)} · ${E(l.card_type||'电话卡')}</div><div>运营商：${E(l.operator||'待核对')}</div><div>手机：${E(l.asset)}</div><div class="dates">领用：${date(l.assigned_at)}　贴标日期：${date(l.label_date)}</div></div>`;}
+function previewLabel(l){if(l.kind==='batch')return `<div class="desk-preview"><h2>${E(l.batch_title)}</h2><p>领卡日期：${E(l.batch_date)}</p><h2>${E(l.quantity)} 张卡</h2><p>${E(l.operator)}</p></div>`;return `<div class="desk-preview"><div class="number">${E(l.phone)}</div><div class="owner">${E(l.name)} · ${E(B.labelCardType(l))}</div><div>运营商：${E(l.operator||'待核对')}</div><div>手机：${E(l.asset)}</div><div class="dates">领用：${date(l.assigned_at)}　贴标日期：${date(l.label_date)}</div></div>`;}
 async function printIds(ids){if(!ids.length){toast('先勾选需要打印的电话卡','err');return;}const r=await save('print_create',{sim_ids:ids},demo?'演示任务已排队，不会实际出纸':'打印任务已排队');if(r){S.selected.clear();nav('print');}}
 function history(assetId='',simId=''){if(!admin()){nav('home');return;}const list=D.logs.filter(l=>(!assetId||l.asset_id===assetId)&&(!simId||l.sim_id===simId)).slice().reverse().slice(0,200);const h=list.map(l=>`<div class="desk-row desk-log"><div><strong>${E(l.action)} · ${E(l.user)}</strong>${E(l.desc)}<time>${stamp(l.time)}</time></div></div>`).join('')||empty('暂无记录');if(assetId||simId)modal('操作历史',h);else layout(header('操作记录','保留登记、交接、账号变化和打印记录；最近200条。')+`<section class="desk-panel">${h}</section>`);}
 
